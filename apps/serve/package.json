@@ -2,8 +2,8 @@
   "name": "@maya/serve",
   "private": true,
   "scripts": {
-    "dev": "ALBUMENTATIONS_DISABLE_VERSION_CHECK=1 MPLCONFIGDIR=.mplconfig UV_CACHE_DIR=.uv-cache uv run python main.py",
-    "check": "ALBUMENTATIONS_DISABLE_VERSION_CHECK=1 MPLCONFIGDIR=.mplconfig UV_CACHE_DIR=.uv-cache uv run ruff check --fix . && ALBUMENTATIONS_DISABLE_VERSION_CHECK=1 MPLCONFIGDIR=.mplconfig UV_CACHE_DIR=.uv-cache uv run ruff format .",
-    "check-types": "ALBUMENTATIONS_DISABLE_VERSION_CHECK=1 MPLCONFIGDIR=.mplconfig PYRIGHT_PYTHON_IGNORE_WARNINGS=1 UV_CACHE_DIR=.uv-cache uv run pyright"
+    "dev": "ALBUMENTATIONS_DISABLE_VERSION_CHECK=1 LD_LIBRARY_PATH=.venv/lib/python3.14/site-packages/nvidia/cublas/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_runtime/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_nvrtc/lib:.venv/lib/python3.14/site-packages/nvidia/cufft/lib:/usr/lib:$LD_LIBRARY_PATH MPLCONFIGDIR=.mplconfig UV_CACHE_DIR=.uv-cache uv run python main.py",
+    "check": "ALBUMENTATIONS_DISABLE_VERSION_CHECK=1 LD_LIBRARY_PATH=.venv/lib/python3.14/site-packages/nvidia/cublas/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_runtime/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_nvrtc/lib:.venv/lib/python3.14/site-packages/nvidia/cufft/lib:/usr/lib:$LD_LIBRARY_PATH MPLCONFIGDIR=.mplconfig UV_CACHE_DIR=.uv-cache uv run ruff check --fix . && ALBUMENTATIONS_DISABLE_VERSION_CHECK=1 LD_LIBRARY_PATH=.venv/lib/python3.14/site-packages/nvidia/cublas/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_runtime/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_nvrtc/lib:.venv/lib/python3.14/site-packages/nvidia/cufft/lib:/usr/lib:$LD_LIBRARY_PATH MPLCONFIGDIR=.mplconfig UV_CACHE_DIR=.uv-cache uv run ruff format .",
+    "check-types": "ALBUMENTATIONS_DISABLE_VERSION_CHECK=1 LD_LIBRARY_PATH=.venv/lib/python3.14/site-packages/nvidia/cublas/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_runtime/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_nvrtc/lib:.venv/lib/python3.14/site-packages/nvidia/cufft/lib:/usr/lib:$LD_LIBRARY_PATH MPLCONFIGDIR=.mplconfig PYRIGHT_PYTHON_IGNORE_WARNINGS=1 UV_CACHE_DIR=.uv-cache uv run pyright"
   }
 }

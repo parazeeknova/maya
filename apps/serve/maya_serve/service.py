@@ -379,6 +379,7 @@ def _aggregate_identity_score(scores: list[float]) -> float:
 
 
 def _cuda_runtime_is_compatible() -> bool:
+    required_device_nodes = ("/dev/nvidia0", "/dev/nvidiactl")
     required_libraries = (
         "libcublasLt.so.12",
         "libcublas.so.12",
@@ -386,6 +387,10 @@ def _cuda_runtime_is_compatible() -> bool:
         "libcufft.so.11",
         "libcudnn.so.9",
     )
+
+    for device_node in required_device_nodes:
+        if not Path(device_node).exists():
+            return False
 
     for library in required_libraries:
         try:
