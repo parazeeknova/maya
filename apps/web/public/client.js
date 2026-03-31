@@ -73,6 +73,20 @@ const mixBox = (fromBox, toBox, progress) => ({
   y: fromBox.y + (toBox.y - fromBox.y) * progress,
 });
 
+const scaleBox = (box, factor) => ({
+  height: box.height * factor,
+  width: box.width * factor,
+  x: box.x * factor,
+  y: box.y * factor,
+});
+
+const subtractBox = (nextBox, previousBox) => ({
+  height: nextBox.height - previousBox.height,
+  width: nextBox.width - previousBox.width,
+  x: nextBox.x - previousBox.x,
+  y: nextBox.y - previousBox.y,
+});
+
 const setConnectionState = (mode) => {
   menuToggle.dataset.state = mode;
   switch (mode) {
@@ -102,7 +116,30 @@ const setConnectionState = (mode) => {
 const getTrackBox = (track, now) => {
   const duration = Math.max(track.transitionDuration, 1);
   const progress = Math.min(1, (now - track.transitionStart) / duration);
-  return mixBox(track.fromBox, track.toBox, progress);
+  const interpolated = mixBox(track.fromBox, track.toBox, progress);
+
+  if (progress < 1) {
+    return interpolated;
+  }
+
+  const predictiveElapsed = Math.min(
+    now - (track.transitionStart + duration),
+    track.maxPredictionMs
+  );
+  if (predictiveElapsed <= 0) {
+    return interpolated;
+  }
+
+  return mixBox(
+    interpolated,
+    {
+      height: interpolated.height + track.velocity.height,
+      width: interpolated.width + track.velocity.width,
+      x: interpolated.x + track.velocity.x,
+      y: interpolated.y + track.velocity.y,
+    },
+    predictiveElapsed / track.maxPredictionMs
+  );
 };
 
 const updateRenderTracks = (message) => {
@@ -115,6 +152,14 @@ const updateRenderTracks = (message) => {
     const existing = state.renderTracks.get(key);
     const fromBox = existing ? getTrackBox(existing, now) : cloneBox(face.bbox);
     const { identity } = face;
+    const transitionDuration = Math.max(48, message.sampleIntervalMs * 0.9);
+    const velocity =
+      existing === undefined
+        ? scaleBox(cloneBox(face.bbox), 0)
+        : scaleBox(
+            subtractBox(face.bbox, existing.toBox),
+            1 / Math.max(now - existing.transitionStart, 16)
+          );
 
     activeKeys.add(key);
     state.renderTracks.set(key, {
@@ -124,12 +169,14 @@ const updateRenderTracks = (message) => {
       label: identity
         ? `${identity.name} · ${identity.role} · ${(face.confidence * 100).toFixed(0)}%`
         : `unknown · ${(face.confidence * 100).toFixed(0)}%`,
+      maxPredictionMs: Math.max(90, message.sampleIntervalMs * 1.2),
       removeAfter: null,
       sourceSize: message.sourceSize,
       toBox: cloneBox(face.bbox),
       trackId: face.trackId,
-      transitionDuration: Math.max(80, message.sampleIntervalMs * 1.1),
+      transitionDuration,
       transitionStart: now,
+      velocity,
     });
   }
 
@@ -242,6 +289,10 @@ const handleServerMessage = (message) => {
         frameCounter.textContent = `${state.framesProcessed} frames`;
         indexValue.textContent = String(message.indexVersion);
         latencyChip.textContent = `${message.latencyMs.toFixed(1)} ms`;
+        state.sampling.intervalMs = Math.max(
+          80,
+          Math.min(state.sampling.intervalMs, message.sampleIntervalMs)
+        );
         updateRenderTracks(message);
       }
       break;

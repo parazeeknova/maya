@@ -63,6 +63,7 @@ export interface PythonServiceReadyMessage {
 }
 
 export interface PythonFrameResultMessage {
+  capturedAt: number;
   faces: {
     bbox: {
       height: number;
@@ -129,7 +130,7 @@ export type ServerToClientMessage =
   | ServerSignalAckMessage;
 
 export const DEFAULT_SAMPLING = {
-  intervalMs: 180,
+  intervalMs: 120,
   jpegQuality: 0.68,
   maxWidth: 640,
 } as const;
