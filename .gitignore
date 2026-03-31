@@ -28,6 +28,10 @@ build
 dist
 apps/serve/.uv-cache/
 apps/serve/.venv/
+apps/serve/.insightface/
+apps/serve/.mplconfig/
+__pycache__/
+*.pyc
 
 
 # Debug

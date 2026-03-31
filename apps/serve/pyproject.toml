@@ -2,7 +2,14 @@
 name = "serve"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "faiss-cpu>=1.13.2",
+    "insightface>=0.7.3",
+    "onnxruntime-gpu>=1.24.4",
+    "pillow>=12.1.1",
+    "supervision>=0.27.0.post2",
+    "websockets>=16.0",
+]
 
 [dependency-groups]
 dev = [
@@ -11,7 +18,8 @@ dev = [
 ]
 
 [tool.pyright]
-include = ["main.py"]
+include = ["main.py", "maya_serve"]
+stubPath = "stubs"
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
@@ -24,6 +32,9 @@ target-version = "py314"
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "I", "UP", "N", "ANN", "SIM", "RET", "PL", "RUF"]
 fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"stubs/**/*.pyi" = ["N802"]
 
 [tool.ruff.format]
 quote-style = "double"

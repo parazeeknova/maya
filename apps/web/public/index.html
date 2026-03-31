@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Maya Local Recognition Console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">Maya / closed-set local inference</p>
+          <h1>Operator Console</h1>
+        </div>
+        <div class="status-pill" id="connection-pill">offline</div>
+      </header>
+
+      <main class="layout">
+        <section class="stage-panel">
+          <div class="stage-header">
+            <div>
+              <p class="panel-label">Live feed</p>
+              <h2>Preview + overlays</h2>
+            </div>
+            <div class="stage-meta">
+              <span id="frame-counter">0 frames</span>
+              <span id="latency-chip">0 ms</span>
+            </div>
+          </div>
+
+          <div class="video-stage">
+            <video id="camera-feed" autoplay muted playsinline></video>
+            <canvas id="overlay-canvas"></canvas>
+          </div>
+
+          <canvas id="capture-canvas" hidden></canvas>
+
+          <div class="controls">
+            <label>
+              <span>Sampling interval</span>
+              <input
+                id="interval-input"
+                type="range"
+                min="120"
+                max="500"
+                value="180"
+                step="10"
+              />
+              <strong id="interval-value">180 ms</strong>
+            </label>
+            <label>
+              <span>JPEG quality</span>
+              <input
+                id="quality-input"
+                type="range"
+                min="40"
+                max="95"
+                value="68"
+                step="1"
+              />
+              <strong id="quality-value">0.68</strong>
+            </label>
+          </div>
+        </section>
+
+        <aside class="side-panel">
+          <section class="info-card">
+            <p class="panel-label">Service graph</p>
+            <h2>Local stack</h2>
+            <ul class="stack-list">
+              <li>Browser canvas capture and overlay rendering</li>
+              <li>Bun orchestration for signaling and transport</li>
+              <li>Python InsightFace + FAISS compute layer</li>
+            </ul>
+          </section>
+
+          <section class="info-card">
+            <p class="panel-label">Runtime</p>
+            <dl class="stats-grid">
+              <div>
+                <dt>Providers</dt>
+                <dd id="providers-value">pending</dd>
+              </div>
+              <div>
+                <dt>Tracking</dt>
+                <dd id="tracking-value">pending</dd>
+              </div>
+              <div>
+                <dt>Enrollment</dt>
+                <dd id="enrollment-value">pending</dd>
+              </div>
+              <div>
+                <dt>Index version</dt>
+                <dd id="index-value">pending</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="info-card">
+            <p class="panel-label">Activity</p>
+            <pre id="activity-log" class="activity-log">
+Booting Maya console…</pre
+            >
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="/client.js"></script>
+  </body>
+</html>
