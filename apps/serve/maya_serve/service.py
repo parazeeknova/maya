@@ -8,7 +8,7 @@ import io
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import faiss
 import numpy as np
@@ -37,6 +37,7 @@ class IndexState:
     signature: tuple[tuple[str, int, int], ...]
     records: tuple[IdentityRecord, ...]
     index: faiss.IndexFlatIP | None
+    reference_identity_ids: tuple[str, ...]
     warnings: tuple[str, ...]
 
 
@@ -52,6 +53,7 @@ class FaceRecognitionService:
             signature=tuple(),
             records=tuple(),
             index=None,
+            reference_identity_ids=tuple(),
             warnings=tuple(),
         )
         self._index_lock = asyncio.Lock()
@@ -77,6 +79,11 @@ class FaceRecognitionService:
             },
             "trackingEnabled": self._tracking is not None,
             "matchThreshold": self._settings.match_threshold,
+            "recognitionConfig": {
+                "marginThreshold": self._settings.match_margin_threshold,
+                "minDetectionConfidence": self._settings.min_detection_confidence,
+                "topK": self._settings.match_top_k,
+            },
             "enrollment": {
                 "directory": str(self._settings.enrollment_dir),
                 "identities": len(self._index_state.records),
@@ -103,6 +110,7 @@ class FaceRecognitionService:
 
         sources, warnings = scan_enrollment_sources(self._settings.enrollment_dir)
         records: list[IdentityRecord] = []
+        reference_identity_ids: list[str] = []
         vectors: list[np.ndarray] = []
 
         for source in sources:
@@ -115,12 +123,9 @@ class FaceRecognitionService:
                 )
                 continue
 
-            prototype = cast(
-                np.ndarray,
-                np.mean(np.vstack(embeddings), axis=0, dtype=np.float32),
-            )
-            faiss.normalize_L2(prototype.reshape(1, -1))
-            vectors.append(prototype.astype(np.float32))
+            for embedding in embeddings:
+                vectors.append(embedding.astype(np.float32))
+                reference_identity_ids.append(source.metadata.id)
             records.append(
                 IdentityRecord(
                     metadata=source.metadata,
@@ -140,6 +145,7 @@ class FaceRecognitionService:
             signature=signature,
             records=tuple(records),
             index=index,
+            reference_identity_ids=tuple(reference_identity_ids),
             warnings=tuple(warnings),
         )
 
@@ -199,7 +205,12 @@ class FaceRecognitionService:
         height = int(image_payload["height"])
         image = self._decode_image_payload(str(image_payload["data"]))
 
-        faces = self._analysis.get(image)
+        faces = [
+            face
+            for face in self._analysis.get(image)
+            if float(getattr(face, "det_score", 1.0))
+            >= self._settings.min_detection_confidence
+        ]
         boxes = [np.asarray(face.bbox, dtype=np.float32) for face in faces]
         candidates = [self._match_face(face) for face in faces]
         scores = [float(getattr(face, "det_score", 1.0)) for face in faces]
@@ -269,17 +280,45 @@ class FaceRecognitionService:
             return MatchCandidate(identity_id=None, confidence=0.0, is_unknown=True)
 
         embedding = _normalized_embedding(face).reshape(1, -1)
-        distances, indices = state.index.search(embedding, 1)
-        score = float(distances[0][0])
-        match_index = int(indices[0][0])
+        top_k = min(self._settings.match_top_k, len(state.reference_identity_ids))
+        distances, indices = state.index.search(embedding, top_k)
+        scores_by_identity: dict[str, list[float]] = {}
 
-        if match_index < 0 or score < self._settings.match_threshold:
-            return MatchCandidate(identity_id=None, confidence=score, is_unknown=True)
+        for score, match_index in zip(distances[0], indices[0], strict=True):
+            if match_index < 0:
+                continue
+            identity_id = state.reference_identity_ids[int(match_index)]
+            scores_by_identity.setdefault(identity_id, []).append(float(score))
 
-        record = state.records[match_index]
+        if not scores_by_identity:
+            return MatchCandidate(identity_id=None, confidence=0.0, is_unknown=True)
+
+        ranked_identities = sorted(
+            (
+                (
+                    _aggregate_identity_score(identity_scores),
+                    identity_id,
+                )
+                for identity_id, identity_scores in scores_by_identity.items()
+            ),
+            reverse=True,
+        )
+        best_score, best_identity_id = ranked_identities[0]
+        second_score = ranked_identities[1][0] if len(ranked_identities) > 1 else 0.0
+
+        if (
+            best_score < self._settings.match_threshold
+            or (best_score - second_score) < self._settings.match_margin_threshold
+        ):
+            return MatchCandidate(
+                identity_id=None,
+                confidence=best_score,
+                is_unknown=True,
+            )
+
         return MatchCandidate(
-            identity_id=record.metadata.id,
-            confidence=score,
+            identity_id=best_identity_id,
+            confidence=best_score,
             is_unknown=False,
         )
 
@@ -330,6 +369,12 @@ def _bbox_payload(raw_bbox: np.ndarray) -> dict[str, float]:
 def _box_area(raw_bbox: np.ndarray) -> float:
     x1, y1, x2, y2 = np.asarray(raw_bbox, dtype=np.float32)
     return float(max(0.0, x2 - x1) * max(0.0, y2 - y1))
+
+
+def _aggregate_identity_score(scores: list[float]) -> float:
+    best_score = max(scores)
+    mean_score = float(np.mean(scores, dtype=np.float32))
+    return (best_score * 0.8) + (mean_score * 0.2)
 
 
 def _cuda_runtime_is_compatible() -> bool:

@@ -31,6 +31,9 @@ class Settings:
     detector_width: int
     detector_height: int
     match_threshold: float
+    match_top_k: int
+    match_margin_threshold: float
+    min_detection_confidence: float
     reload_interval_seconds: float
     tracking_enabled: bool
     tracker_activation_threshold: float
@@ -67,6 +70,9 @@ def load_settings() -> Settings:
         detector_width=_get_int("MAYA_DETECTOR_WIDTH", 640),
         detector_height=_get_int("MAYA_DETECTOR_HEIGHT", 640),
         match_threshold=_get_float("MAYA_MATCH_THRESHOLD", 0.55),
+        match_top_k=_get_int("MAYA_MATCH_TOP_K", 5),
+        match_margin_threshold=_get_float("MAYA_MATCH_MARGIN_THRESHOLD", 0.04),
+        min_detection_confidence=_get_float("MAYA_MIN_DETECTION_CONFIDENCE", 0.5),
         reload_interval_seconds=_get_float("MAYA_RELOAD_INTERVAL_SECONDS", 2.0),
         tracking_enabled=_get_bool("MAYA_TRACKING_ENABLED", True),
         tracker_activation_threshold=_get_float(
