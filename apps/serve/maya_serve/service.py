@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import ctypes
 import io
 import time
 from dataclasses import dataclass
@@ -145,10 +146,10 @@ class FaceRecognitionService:
     def _build_face_analysis(self) -> tuple[FaceAnalysis, list[str]]:
         available = ort.get_available_providers()
         providers = [
-            provider
-            for provider in ("CUDAExecutionProvider", "CPUExecutionProvider")
-            if provider in available
+            provider for provider in ("CPUExecutionProvider",) if provider in available
         ]
+        if "CUDAExecutionProvider" in available and _cuda_runtime_is_compatible():
+            providers.insert(0, "CUDAExecutionProvider")
         if not providers:
             providers = ["CPUExecutionProvider"]
 
@@ -315,3 +316,21 @@ def _bbox_payload(raw_bbox: np.ndarray) -> dict[str, float]:
 def _box_area(raw_bbox: np.ndarray) -> float:
     x1, y1, x2, y2 = np.asarray(raw_bbox, dtype=np.float32)
     return float(max(0.0, x2 - x1) * max(0.0, y2 - y1))
+
+
+def _cuda_runtime_is_compatible() -> bool:
+    required_libraries = (
+        "libcublasLt.so.12",
+        "libcublas.so.12",
+        "libcudart.so.12",
+        "libcufft.so.11",
+        "libcudnn.so.9",
+    )
+
+    for library in required_libraries:
+        try:
+            ctypes.CDLL(library)
+        except OSError:
+            return False
+
+    return True
