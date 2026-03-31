@@ -83,6 +83,11 @@ class FaceRecognitionService:
                 "version": self._index_state.version,
                 "warnings": list(self._index_state.warnings),
             },
+            "trackingConfig": {
+                "boxSmoothingAlpha": self._settings.tracker_box_smoothing_alpha,
+                "identitySwitchHits": self._settings.tracker_identity_switch_hits,
+                "trackHoldMs": self._settings.tracker_track_hold_ms,
+            },
         }
 
     async def handle_raw_message(self, message: str | bytes) -> str:
@@ -189,39 +194,47 @@ class FaceRecognitionService:
         frame_id = int(payload["frameId"])
         sample_interval_ms = int(payload.get("sampleIntervalMs", 180))
         image_payload = payload["image"]
+        captured_at = int(payload.get("capturedAt", 0))
         width = int(image_payload["width"])
         height = int(image_payload["height"])
         image = self._decode_image_payload(str(image_payload["data"]))
 
         faces = self._analysis.get(image)
         boxes = [np.asarray(face.bbox, dtype=np.float32) for face in faces]
-        track_ids = (
-            self._tracking.assign_track_ids(boxes)
+        candidates = [self._match_face(face) for face in faces]
+        scores = [float(getattr(face, "det_score", 1.0)) for face in faces]
+        tracked_faces = (
+            self._tracking.update(
+                boxes=boxes,
+                candidates=candidates,
+                scores=scores,
+                now_ms=time.time_ns() // 1_000_000,
+            )
             if self._tracking is not None
-            else [None for _ in boxes]
+            else []
         )
 
         results: list[dict[str, Any]] = []
-        for face, track_id in zip(faces, track_ids, strict=True):
-            candidate = self._match_face(face)
-            if self._tracking is not None:
-                candidate = self._tracking.stabilize(
-                    track_id=track_id,
-                    candidate=candidate,
-                    now_ms=time.time_ns() // 1_000_000,
-                )
-
-            metadata = (
-                self._metadata_for(candidate.identity_id)
-                if candidate.identity_id is not None
-                else None
+        for index, face in enumerate(faces):
+            tracked_face = tracked_faces[index] if tracked_faces else None
+            candidate = (
+                tracked_face.candidate
+                if tracked_face is not None
+                else candidates[index]
             )
-            bbox = _bbox_payload(face.bbox)
+            metadata = self._metadata_for(candidate.identity_id)
+            bbox = _bbox_payload(
+                tracked_face.bbox if tracked_face is not None else face.bbox
+            )
             result = {
-                "trackId": track_id,
+                "detConfidence": round(scores[index], 4),
                 "bbox": bbox,
                 "confidence": round(candidate.confidence, 4),
                 "isUnknown": candidate.is_unknown,
+                "trackAgeFrames": (
+                    tracked_face.track_age_frames if tracked_face is not None else 1
+                ),
+                "trackId": tracked_face.track_id if tracked_face is not None else None,
                 "identity": (
                     {
                         "id": metadata.id,
@@ -241,6 +254,7 @@ class FaceRecognitionService:
             "type": "frame.result",
             "sessionId": session_id,
             "frameId": frame_id,
+            "capturedAt": captured_at,
             "sampleIntervalMs": sample_interval_ms,
             "sourceSize": {"width": width, "height": height},
             "latencyMs": round((ended_at - started_at) / 1_000_000, 2),

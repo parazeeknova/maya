@@ -38,6 +38,10 @@ class Settings:
     tracker_lost_buffer: int
     tracker_minimum_consecutive_frames: int
     tracker_frame_rate: int
+    tracker_box_smoothing_alpha: float
+    tracker_identity_switch_hits: int
+    tracker_stable_confidence_floor: float
+    tracker_track_hold_ms: int
 
     @property
     def detector_size(self) -> tuple[int, int]:
@@ -79,4 +83,17 @@ def load_settings() -> Settings:
             1,
         ),
         tracker_frame_rate=_get_int("MAYA_TRACKER_FRAME_RATE", 6),
+        tracker_box_smoothing_alpha=_get_float(
+            "MAYA_TRACKER_BOX_SMOOTHING_ALPHA",
+            0.58,
+        ),
+        tracker_identity_switch_hits=_get_int(
+            "MAYA_TRACKER_IDENTITY_SWITCH_HITS",
+            2,
+        ),
+        tracker_stable_confidence_floor=_get_float(
+            "MAYA_TRACKER_STABLE_CONFIDENCE_FLOOR",
+            0.48,
+        ),
+        tracker_track_hold_ms=_get_int("MAYA_TRACKER_TRACK_HOLD_MS", 4_000),
     )
