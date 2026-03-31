@@ -12,11 +12,13 @@ const cameraFeed = requiredNode("#camera-feed");
 const overlayCanvas = requiredNode("#overlay-canvas");
 /** @type {HTMLCanvasElement} */
 const captureCanvas = requiredNode("#capture-canvas");
-/** @type {HTMLPreElement} */
-const activityLog = requiredNode("#activity-log");
+/** @type {HTMLDetailsElement} */
+const menuShell = requiredNode("#menu-shell");
+/** @type {HTMLElement} */
+const menuToggle = requiredNode("#menu-toggle");
+const connectionValue = requiredNode("#connection-value");
 const frameCounter = requiredNode("#frame-counter");
 const latencyChip = requiredNode("#latency-chip");
-const connectionPill = requiredNode("#connection-pill");
 const providersValue = requiredNode("#providers-value");
 const trackingValue = requiredNode("#tracking-value");
 const enrollmentValue = requiredNode("#enrollment-value");
@@ -53,42 +55,28 @@ const state = {
   },
 };
 
-const logLine = (line) => {
-  const timestamp = new Date().toLocaleTimeString();
-  activityLog.textContent =
-    `[${timestamp}] ${line}\n${activityLog.textContent}`.slice(0, 2400);
-};
-
 const setConnectionState = (mode) => {
+  menuToggle.dataset.state = mode;
   switch (mode) {
     case "connected": {
-      connectionPill.textContent = "bun online";
-      connectionPill.style.borderColor = "rgba(78, 227, 255, 0.26)";
-      connectionPill.style.color = "#4ee3ff";
+      connectionValue.textContent = "bun online";
       break;
     }
     case "error": {
-      connectionPill.textContent = "error";
-      connectionPill.style.borderColor = "rgba(255, 107, 136, 0.3)";
-      connectionPill.style.color = "#ff6b88";
+      connectionValue.textContent = "error";
       break;
     }
     case "python-ready": {
-      connectionPill.textContent = "python ready";
-      connectionPill.style.borderColor = "rgba(182, 255, 99, 0.3)";
-      connectionPill.style.color = "#b6ff63";
+      connectionValue.textContent = "python ready";
       break;
     }
     case "python-wait": {
-      connectionPill.textContent = "python wait";
-      connectionPill.style.borderColor = "rgba(255, 209, 102, 0.3)";
-      connectionPill.style.color = "#ffd166";
+      connectionValue.textContent = "python wait";
       break;
     }
     default: {
-      connectionPill.textContent = "offline";
-      connectionPill.style.borderColor = "rgba(148, 163, 184, 0.28)";
-      connectionPill.style.color = "#94a3b8";
+      connectionValue.textContent = "offline";
+      menuToggle.dataset.state = "offline";
     }
   }
 };
@@ -107,7 +95,7 @@ const drawOverlay = () => {
   overlayContext.textBaseline = "top";
 
   for (const face of state.latestFaces) {
-    const color = face.identity?.color ?? "#94a3b8";
+    const color = face.identity?.color ?? "#ffffff";
     const height = face.bbox.height * scaleY;
     const label = face.identity
       ? `${face.identity.name} · ${face.identity.role} · ${(face.confidence * 100).toFixed(0)}%`
@@ -127,7 +115,7 @@ const drawOverlay = () => {
 
     overlayContext.fillStyle = color;
     overlayContext.fillRect(x, chipY, chipWidth, chipHeight);
-    overlayContext.fillStyle = "#08111b";
+    overlayContext.fillStyle = "#000";
     overlayContext.fillText(label, x + 10, chipY + 6);
   }
 
@@ -144,7 +132,7 @@ const syncOverlaySize = () => {
 const handleServerMessage = (message) => {
   switch (message.type) {
     case "error": {
-      logLine(`server error: ${message.message}`);
+      connectionValue.textContent = message.message;
       break;
     }
     case "frame.result": {
@@ -174,7 +162,6 @@ const handleServerMessage = (message) => {
       trackingValue.textContent = message.ready?.trackingEnabled
         ? "ByteTrack"
         : "off";
-      logLine(message.detail);
       break;
     }
     case "session.ready": {
@@ -195,11 +182,10 @@ const handleServerMessage = (message) => {
       break;
     }
     case "signal.ack": {
-      logLine(`signaling ack: ${message.signalType}`);
       break;
     }
     default: {
-      logLine(`unhandled message: ${message.type}`);
+      break;
     }
   }
 };
@@ -260,13 +246,7 @@ const restartSampler = () => {
       return;
     }
 
-    try {
-      sampleAndSendFrame();
-    } catch (error) {
-      logLine(
-        `frame capture error: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    sampleAndSendFrame();
   }, state.sampling.intervalMs);
 };
 
@@ -278,7 +258,6 @@ const connectSocket = () => {
   state.socket = socket;
 
   socket.addEventListener("close", () => {
-    logLine("bun session closed, retrying…");
     setConnectionState("offline");
     window.setTimeout(connectSocket, 1000);
   });
@@ -297,7 +276,6 @@ const connectSocket = () => {
         type: "client.hello",
       })
     );
-    logLine("bun session connected");
     setConnectionState("connected");
   });
 };
@@ -315,9 +293,6 @@ const startCamera = async () => {
   cameraFeed.addEventListener(
     "loadedmetadata",
     () => {
-      logLine(
-        `camera ready ${cameraFeed.videoWidth}x${cameraFeed.videoHeight}`
-      );
       syncOverlaySize();
     },
     { once: true }
@@ -333,16 +308,19 @@ const bootstrap = async () => {
   connectSocket();
 };
 
-const startApp = async () => {
-  try {
-    await bootstrap();
-  } catch (error) {
-    logLine(
-      `bootstrap error: ${error instanceof Error ? error.message : String(error)}`
-    );
-    setConnectionState("error");
+menuToggle.addEventListener("click", () => {
+  menuToggle.setAttribute("aria-expanded", String(!menuShell.open));
+});
+
+menuShell.addEventListener("toggle", () => {
+  menuToggle.setAttribute("aria-expanded", String(menuShell.open));
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && menuShell.open) {
+    menuShell.open = false;
   }
-};
+});
 
 intervalInput.addEventListener("input", () => {
   state.sampling.intervalMs = Number(intervalInput.value);
@@ -360,4 +338,4 @@ qualityValue.textContent = state.sampling.jpegQuality.toFixed(2);
 
 window.addEventListener("resize", syncOverlaySize);
 
-void startApp();
+void bootstrap();

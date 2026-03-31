@@ -61,6 +61,18 @@ export class PythonBridge {
     }
   }
 
+  close(): void {
+    this.clearReconnectTimer();
+    if (
+      this.upstream &&
+      (this.upstream.readyState === WebSocket.CONNECTING ||
+        this.upstream.readyState === WebSocket.OPEN)
+    ) {
+      this.upstream.close(1000, "Bun server shutting down");
+    }
+    this.upstream = null;
+  }
+
   handleFrame(message: ClientFrameSubmitMessage): void {
     const session = this.sessions.get(message.sessionId);
     if (!session) {

@@ -127,3 +127,23 @@ console.log(
   `Maya web listening on http://${server.hostname}:${server.port} ` +
     `with Python bridge ${pythonUrl}`
 );
+
+let shuttingDown = false;
+
+const shutdown = async (signal: string) => {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+
+  console.log(`Maya web shutting down on ${signal}`);
+  bridge.close();
+  await server.stop(true);
+  process.exit(0);
+};
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    void shutdown(signal);
+  });
+}
