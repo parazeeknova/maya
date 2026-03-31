@@ -1,0 +1,18 @@
+{
+  "capture": {
+    "intervalMs": 120,
+    "jpegQuality": 0.55,
+    "maxWidth": 360
+  },
+  "detector": {
+    "kind": "shape-detection"
+  },
+  "recognizer": {
+    "embeddingDimension": 512,
+    "inputSize": 112,
+    "marginThreshold": 0.04,
+    "modelUrl": "/models/w600k_r50.onnx",
+    "threshold": 0.55,
+    "topK": 5
+  }
+}
