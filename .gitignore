@@ -26,6 +26,8 @@ coverage
 out/
 build
 dist
+apps/serve/.uv-cache/
+apps/serve/.venv/
 
 
 # Debug

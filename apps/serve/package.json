@@ -1,0 +1,8 @@
+{
+  "name": "@maya/serve",
+  "private": true,
+  "scripts": {
+    "check": "UV_CACHE_DIR=.uv-cache uv run ruff check --fix . && UV_CACHE_DIR=.uv-cache uv run ruff format .",
+    "check-types": "UV_CACHE_DIR=.uv-cache uv run pyright"
+  }
+}

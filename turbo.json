@@ -1,6 +1,5 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
-  "ui": "tui",
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -8,9 +7,15 @@
       "outputs": [".next/**", "!.next/cache/**"],
       "cache": true
     },
+    "check": {
+      "dependsOn": ["^check"],
+      "cache": true,
+      "outputs": []
+    },
     "check-types": {
       "dependsOn": ["^check-types"],
-      "cache": true
+      "cache": true,
+      "outputs": []
     },
     "dev": {
       "cache": false,
