@@ -5,6 +5,8 @@ import base64
 import contextlib
 import ctypes
 import io
+import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -390,6 +392,11 @@ def _cuda_runtime_is_compatible() -> bool:
 
     for device_node in required_device_nodes:
         if not Path(device_node).exists():
+            _ensure_nvidia_device_nodes()
+            break
+
+    for device_node in required_device_nodes:
+        if not Path(device_node).exists():
             return False
 
     for library in required_libraries:
@@ -399,3 +406,16 @@ def _cuda_runtime_is_compatible() -> bool:
             return False
 
     return True
+
+
+def _ensure_nvidia_device_nodes() -> None:
+    executable = shutil.which("nvidia-modprobe")
+    if executable is None:
+        return
+
+    subprocess.run(
+        [executable, "-u", "-c=0"],
+        check=False,
+        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+    )

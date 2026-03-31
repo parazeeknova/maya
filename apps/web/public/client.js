@@ -39,7 +39,7 @@ if (overlayContext === null || captureContext === null) {
 const state = {
   frameId: 0,
   framesProcessed: 0,
-  lastCompletedFrameId: -1,
+  lastCompletedFrameId: 0,
   lastResultFrameId: -1,
   renderTracks: new Map(),
   sampleTimer: null,

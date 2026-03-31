@@ -7,7 +7,11 @@ import signal
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
-from maya_serve import FaceRecognitionService, load_settings
+from maya_serve import (
+    FaceRecognitionService,
+    install_runtime_compatibility_patches,
+    load_settings,
+)
 from maya_serve.protocol import dumps
 
 
@@ -31,6 +35,7 @@ async def handle_connection(
 
 
 async def main() -> None:
+    install_runtime_compatibility_patches()
     settings = load_settings()
     service = FaceRecognitionService(settings)
     await service.start()
