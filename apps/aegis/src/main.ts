@@ -15,7 +15,11 @@ interface RuntimeConfig {
     maxWidth: number;
   };
   detector: {
-    kind: "shape-detection";
+    inputSize: number;
+    maxFaces: number;
+    modelUrl: string;
+    nmsThreshold: number;
+    scoreThreshold: number;
   };
   recognizer: {
     embeddingDimension: number;
@@ -104,7 +108,7 @@ if (
   facesPill === null ||
   statusCopy === null
 ) {
-  throw new TypeError("Aegis UI failed to initialize.");
+  throw new TypeError("Maya UI failed to initialize.");
 }
 
 const context = overlay.getContext("2d");
@@ -120,21 +124,6 @@ const state = {
   config: null as RuntimeConfig | null,
   frameId: 0,
   inFlight: false,
-};
-
-interface BrowserFaceDetector {
-  detect(source: CanvasImageSource): Promise<
-    {
-      boundingBox: DOMRectReadOnly;
-    }[]
-  >;
-}
-
-type BrowserWindow = Window & {
-  FaceDetector?: new (options?: {
-    fastMode?: boolean;
-    maxDetectedFaces?: number;
-  }) => BrowserFaceDetector;
 };
 
 const resizeOverlay = () => {
@@ -175,14 +164,14 @@ const drawFaces = (
     context.strokeStyle = color;
     context.strokeRect(x, y, width, height);
 
-    const chipHeight = 28;
+    const chipHeight = 24;
     const chipWidth = context.measureText(label).width + 18;
     const chipY = Math.max(8, y - chipHeight - 8);
 
     context.fillStyle = color;
     context.fillRect(x, chipY, chipWidth, chipHeight);
     context.fillStyle = "#000";
-    context.fillText(label, x + 9, chipY + 6);
+    context.fillText(label, x + 9, chipY + 4);
   }
 
   context.shadowBlur = 0;
@@ -202,18 +191,7 @@ const startCamera = async () => {
   resizeOverlay();
 };
 
-const detectFaces = () => {
-  const browserWindow = window as BrowserWindow;
-  const FaceDetectorCtor = browserWindow.FaceDetector;
-  if (FaceDetectorCtor === undefined) {
-    throw new Error("FaceDetector API is not available in this browser.");
-  }
-
-  const detector = new FaceDetectorCtor({
-    fastMode: true,
-    maxDetectedFaces: 5,
-  });
-
+const runLoop = () => {
   const loop = async () => {
     if (
       state.config === null ||
@@ -226,19 +204,10 @@ const detectFaces = () => {
 
     state.inFlight = true;
     try {
-      const detections = await detector.detect(camera);
       const frame = await createImageBitmap(camera);
       state.frameId += 1;
       worker.postMessage(
         {
-          detections: detections.map(
-            (detection: { boundingBox: DOMRectReadOnly }) => ({
-              height: detection.boundingBox.height,
-              width: detection.boundingBox.width,
-              x: detection.boundingBox.x,
-              y: detection.boundingBox.y,
-            })
-          ),
           frame,
           frameId: state.frameId,
           sourceHeight: camera.videoHeight,
@@ -248,13 +217,14 @@ const detectFaces = () => {
         [frame]
       );
     } catch (error) {
+      state.inFlight = false;
       statusCopy.textContent =
         error instanceof Error ? error.message : String(error);
-      state.inFlight = false;
     } finally {
       window.setTimeout(loop, state.config.capture.intervalMs);
     }
   };
+
   void loop();
 };
 
@@ -288,12 +258,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerResponse>) => {
   if (event.data.status === "ready") {
     devicePill.textContent = event.data.device;
     statusCopy.innerHTML = `Running on <code>${event.data.device}</code> with ${event.data.identities} enrolled identities.`;
-    try {
-      detectFaces();
-    } catch (error) {
-      statusCopy.textContent =
-        error instanceof Error ? error.message : String(error);
-    }
+    runLoop();
     return;
   }
 
