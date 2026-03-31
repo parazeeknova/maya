@@ -39,8 +39,9 @@ if (overlayContext === null || captureContext === null) {
 const state = {
   frameId: 0,
   framesProcessed: 0,
+  lastCompletedFrameId: -1,
   lastResultFrameId: -1,
-  latestFaces: [],
+  renderTracks: new Map(),
   sampleTimer: null,
   sampling: {
     intervalMs: Number(intervalInput.value),
@@ -54,6 +55,23 @@ const state = {
     width: 0,
   },
 };
+
+const cloneBox = (bbox) => ({
+  height: bbox.height,
+  width: bbox.width,
+  x: bbox.x,
+  y: bbox.y,
+});
+
+const makeTrackKey = (face, index) =>
+  face.trackId === null ? `ephemeral-${index}` : `track-${face.trackId}`;
+
+const mixBox = (fromBox, toBox, progress) => ({
+  height: fromBox.height + (toBox.height - fromBox.height) * progress,
+  width: fromBox.width + (toBox.width - fromBox.width) * progress,
+  x: fromBox.x + (toBox.x - fromBox.x) * progress,
+  y: fromBox.y + (toBox.y - fromBox.y) * progress,
+});
 
 const setConnectionState = (mode) => {
   menuToggle.dataset.state = mode;
@@ -81,45 +99,122 @@ const setConnectionState = (mode) => {
   }
 };
 
+const getTrackBox = (track, now) => {
+  const duration = Math.max(track.transitionDuration, 1);
+  const progress = Math.min(1, (now - track.transitionStart) / duration);
+  return mixBox(track.fromBox, track.toBox, progress);
+};
+
+const updateRenderTracks = (message) => {
+  const activeKeys = new Set();
+  const now = performance.now();
+  const fadeDuration = Math.max(220, message.sampleIntervalMs * 1.35);
+
+  for (const [index, face] of message.faces.entries()) {
+    const key = makeTrackKey(face, index);
+    const existing = state.renderTracks.get(key);
+    const fromBox = existing ? getTrackBox(existing, now) : cloneBox(face.bbox);
+    const { identity } = face;
+
+    activeKeys.add(key);
+    state.renderTracks.set(key, {
+      color: identity?.color ?? "#ffffff",
+      fadeDuration,
+      fromBox,
+      label: identity
+        ? `${identity.name} · ${identity.role} · ${(face.confidence * 100).toFixed(0)}%`
+        : `unknown · ${(face.confidence * 100).toFixed(0)}%`,
+      removeAfter: null,
+      sourceSize: message.sourceSize,
+      toBox: cloneBox(face.bbox),
+      trackId: face.trackId,
+      transitionDuration: Math.max(80, message.sampleIntervalMs * 1.1),
+      transitionStart: now,
+    });
+  }
+
+  for (const [key, track] of state.renderTracks.entries()) {
+    if (activeKeys.has(key)) {
+      continue;
+    }
+
+    if (track.trackId === null) {
+      state.renderTracks.delete(key);
+      continue;
+    }
+
+    if (track.removeAfter === null) {
+      const frozenBox = getTrackBox(track, now);
+      state.renderTracks.set(key, {
+        ...track,
+        fromBox: frozenBox,
+        removeAfter: now + fadeDuration,
+        toBox: frozenBox,
+        transitionStart: now,
+      });
+    }
+  }
+};
+
 const drawOverlay = () => {
   overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   if (!state.sourceSize.height || !state.sourceSize.width) {
     return;
   }
 
-  const scaleX = overlayCanvas.width / state.sourceSize.width;
-  const scaleY = overlayCanvas.height / state.sourceSize.height;
+  const now = performance.now();
 
   overlayContext.font = '14px "Cascadia Mono", monospace';
   overlayContext.lineWidth = 3;
   overlayContext.textBaseline = "top";
 
-  for (const face of state.latestFaces) {
-    const color = face.identity?.color ?? "#ffffff";
-    const height = face.bbox.height * scaleY;
-    const label = face.identity
-      ? `${face.identity.name} · ${face.identity.role} · ${(face.confidence * 100).toFixed(0)}%`
-      : `unknown · ${(face.confidence * 100).toFixed(0)}%`;
-    const width = face.bbox.width * scaleX;
-    const x = face.bbox.x * scaleX;
-    const y = face.bbox.y * scaleY;
+  for (const [key, track] of state.renderTracks.entries()) {
+    const scaleX = overlayCanvas.width / track.sourceSize.width;
+    const scaleY = overlayCanvas.height / track.sourceSize.height;
+    const box = getTrackBox(track, now);
+    const { color } = track;
+    const width = box.width * scaleX;
+    const height = box.height * scaleY;
+    const x = box.x * scaleX;
+    const y = box.y * scaleY;
+    let alpha = 1;
+
+    if (track.removeAfter !== null) {
+      alpha = Math.max(
+        0,
+        (track.removeAfter - now) / Math.max(track.fadeDuration, 1)
+      );
+      if (alpha <= 0) {
+        state.renderTracks.delete(key);
+        continue;
+      }
+    }
 
     overlayContext.shadowBlur = 18;
-    overlayContext.shadowColor = `${color}66`;
+    overlayContext.shadowColor = `${color}${Math.round(alpha * 102)
+      .toString(16)
+      .padStart(2, "0")}`;
     overlayContext.strokeStyle = color;
+    overlayContext.globalAlpha = alpha;
     overlayContext.strokeRect(x, y, width, height);
 
     const chipHeight = 28;
-    const chipWidth = overlayContext.measureText(label).width + 20;
+    const chipWidth = overlayContext.measureText(track.label).width + 20;
     const chipY = Math.max(8, y - chipHeight - 8);
 
     overlayContext.fillStyle = color;
     overlayContext.fillRect(x, chipY, chipWidth, chipHeight);
     overlayContext.fillStyle = "#000";
-    overlayContext.fillText(label, x + 10, chipY + 6);
+    overlayContext.fillText(track.label, x + 10, chipY + 6);
   }
 
+  overlayContext.globalAlpha = 1;
   overlayContext.shadowBlur = 0;
+};
+
+const renderLoop = () => {
+  drawOverlay();
+  window.requestAnimationFrame(renderLoop);
 };
 
 const syncOverlaySize = () => {
@@ -137,14 +232,17 @@ const handleServerMessage = (message) => {
     }
     case "frame.result": {
       if (message.frameId >= state.lastResultFrameId) {
+        state.lastCompletedFrameId = Math.max(
+          state.lastCompletedFrameId,
+          message.frameId
+        );
         state.framesProcessed += 1;
         state.lastResultFrameId = message.frameId;
-        state.latestFaces = message.faces;
         state.sourceSize = message.sourceSize;
         frameCounter.textContent = `${state.framesProcessed} frames`;
         indexValue.textContent = String(message.indexVersion);
         latencyChip.textContent = `${message.latencyMs.toFixed(1)} ms`;
-        drawOverlay();
+        updateRenderTracks(message);
       }
       break;
     }
@@ -196,6 +294,16 @@ const sampleAndSendFrame = () => {
   if (!sourceHeight || !sourceWidth) {
     return;
   }
+  if (document.hidden) {
+    return;
+  }
+  if (
+    state.frameId - state.lastCompletedFrameId > 1 ||
+    !(state.socket instanceof WebSocket) ||
+    state.socket.bufferedAmount > 512_000
+  ) {
+    return;
+  }
 
   const scale = Math.min(1, state.sampling.maxWidth / sourceWidth);
   const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
@@ -210,7 +318,7 @@ const sampleAndSendFrame = () => {
     state.sampling.jpegQuality
   );
   const [, base64] = dataUrl.split(",", 2);
-  if (base64 === undefined || !(state.socket instanceof WebSocket)) {
+  if (base64 === undefined) {
     return;
   }
 
@@ -301,6 +409,7 @@ const startCamera = async () => {
   cameraFeed.srcObject = stream;
   await cameraFeed.play();
   restartSampler();
+  window.requestAnimationFrame(renderLoop);
 };
 
 const bootstrap = async () => {
