@@ -46,7 +46,7 @@ const state = {
   sampling: {
     intervalMs: Number(intervalInput.value),
     jpegQuality: Number(qualityInput.value) / 100,
-    maxWidth: 640,
+    maxWidth: 320,
   },
   sessionId: crypto.randomUUID(),
   socket: null,
@@ -289,10 +289,16 @@ const handleServerMessage = (message) => {
         frameCounter.textContent = `${state.framesProcessed} frames`;
         indexValue.textContent = String(message.indexVersion);
         latencyChip.textContent = `${message.latencyMs.toFixed(1)} ms`;
-        state.sampling.intervalMs = Math.max(
-          80,
-          Math.min(state.sampling.intervalMs, message.sampleIntervalMs)
-        );
+        if (message.latencyMs > 300) {
+          state.sampling.jpegQuality = 0.42;
+          state.sampling.maxWidth = 224;
+        } else if (message.latencyMs > 160) {
+          state.sampling.jpegQuality = 0.46;
+          state.sampling.maxWidth = 256;
+        } else if (message.latencyMs < 80) {
+          state.sampling.jpegQuality = 0.5;
+          state.sampling.maxWidth = 320;
+        }
         updateRenderTracks(message);
       }
       break;
@@ -349,9 +355,9 @@ const sampleAndSendFrame = () => {
     return;
   }
   if (
-    state.frameId - state.lastCompletedFrameId > 1 ||
+    state.frameId - state.lastCompletedFrameId > 0 ||
     !(state.socket instanceof WebSocket) ||
-    state.socket.bufferedAmount > 512_000
+    state.socket.bufferedAmount > 128_000
   ) {
     return;
   }

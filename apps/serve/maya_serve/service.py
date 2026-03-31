@@ -166,8 +166,9 @@ class FaceRecognitionService:
 
         ctx_id = 0 if "CUDAExecutionProvider" in providers else -1
         analysis = FaceAnalysis(
-            name="buffalo_l",
+            name=self._settings.model_pack,
             root=str(self._settings.model_root),
+            allowed_modules=["detection", "recognition"],
             providers=providers,
         )
         analysis.prepare(ctx_id=ctx_id, det_size=self._settings.detector_size)

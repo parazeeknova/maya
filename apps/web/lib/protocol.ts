@@ -130,9 +130,9 @@ export type ServerToClientMessage =
   | ServerSignalAckMessage;
 
 export const DEFAULT_SAMPLING = {
-  intervalMs: 120,
-  jpegQuality: 0.68,
-  maxWidth: 640,
+  intervalMs: 80,
+  jpegQuality: 0.5,
+  maxWidth: 320,
 } as const;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>

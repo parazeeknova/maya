@@ -27,6 +27,7 @@ class Settings:
     host: str
     port: int
     enrollment_dir: Path
+    model_pack: str
     model_root: Path
     detector_width: int
     detector_height: int
@@ -64,11 +65,12 @@ def load_settings() -> Settings:
         host=os.getenv("MAYA_SERVE_HOST", "127.0.0.1"),
         port=_get_int("MAYA_SERVE_PORT", 8765),
         enrollment_dir=enrollment_dir,
+        model_pack=os.getenv("MAYA_MODEL_PACK", "buffalo_l"),
         model_root=Path(
             os.getenv("MAYA_MODEL_ROOT", project_root / ".insightface")
         ).resolve(),
-        detector_width=_get_int("MAYA_DETECTOR_WIDTH", 640),
-        detector_height=_get_int("MAYA_DETECTOR_HEIGHT", 640),
+        detector_width=_get_int("MAYA_DETECTOR_WIDTH", 320),
+        detector_height=_get_int("MAYA_DETECTOR_HEIGHT", 320),
         match_threshold=_get_float("MAYA_MATCH_THRESHOLD", 0.55),
         match_top_k=_get_int("MAYA_MATCH_TOP_K", 5),
         match_margin_threshold=_get_float("MAYA_MATCH_MARGIN_THRESHOLD", 0.04),
