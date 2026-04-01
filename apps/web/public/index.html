@@ -76,6 +76,53 @@
             <span class="option-label">Index version</span>
             <strong id="index-value">pending</strong>
           </div>
+
+          <form id="enrollment-form" class="option-group form-group">
+            <span class="option-label">Enroll identity</span>
+            <input
+              id="identity-name-input"
+              class="tiny-input"
+              type="text"
+              name="name"
+              placeholder="name"
+              required
+            />
+            <input
+              id="identity-role-input"
+              class="tiny-input"
+              type="text"
+              name="role"
+              placeholder="role"
+              required
+            />
+            <input
+              id="identity-color-input"
+              class="tiny-input"
+              type="text"
+              name="color"
+              placeholder="#4ee3ff"
+              value="#4ee3ff"
+              required
+            />
+            <input
+              id="identity-files-input"
+              class="tiny-input"
+              type="file"
+              name="files"
+              accept=".jpg,.jpeg,.png,.webp"
+              multiple
+              required
+            />
+            <button id="enroll-submit-button" class="tiny-button" type="submit">
+              Upload
+            </button>
+            <small id="enrollment-status" class="option-note">idle</small>
+          </form>
+
+          <div class="option-group">
+            <span class="option-label">Stored identities</span>
+            <div id="enrollment-list" class="identity-list"></div>
+          </div>
         </section>
       </details>
     </main>

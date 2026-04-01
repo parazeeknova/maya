@@ -23,6 +23,13 @@ const providersValue = requiredNode("#providers-value");
 const trackingValue = requiredNode("#tracking-value");
 const enrollmentValue = requiredNode("#enrollment-value");
 const indexValue = requiredNode("#index-value");
+const enrollmentForm = requiredNode("#enrollment-form");
+const enrollmentStatus = requiredNode("#enrollment-status");
+const enrollmentList = requiredNode("#enrollment-list");
+const identityNameInput = requiredNode("#identity-name-input");
+const identityRoleInput = requiredNode("#identity-role-input");
+const identityColorInput = requiredNode("#identity-color-input");
+const identityFilesInput = requiredNode("#identity-files-input");
 /** @type {HTMLInputElement} */
 const intervalInput = requiredNode("#interval-input");
 const intervalValue = requiredNode("#interval-value");
@@ -37,6 +44,7 @@ if (overlayContext === null || captureContext === null) {
 }
 
 const state = {
+  enrollmentIdentities: [],
   frameId: 0,
   framesProcessed: 0,
   lastCompletedFrameId: 0,
@@ -54,6 +62,42 @@ const state = {
     height: 0,
     width: 0,
   },
+};
+
+const renderEnrollmentList = () => {
+  enrollmentList.replaceChildren();
+
+  for (const identity of state.enrollmentIdentities) {
+    const row = document.createElement("div");
+    row.className = "identity-row";
+    row.innerHTML = `
+      <div>
+        <strong>${identity.metadata.name}</strong>
+        <span>${identity.id} · ${identity.metadata.role} · ${identity.files.length} file(s)</span>
+      </div>
+      <button class="identity-delete" data-id="${identity.id}" type="button">Delete</button>
+    `;
+    enrollmentList.append(row);
+  }
+
+  if (state.enrollmentIdentities.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "option-note";
+    empty.textContent = "no identities";
+    enrollmentList.append(empty);
+  }
+};
+
+const loadEnrollmentList = async () => {
+  const response = await fetch("/api/enrollment");
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error ?? "Failed to load enrollment list.");
+  }
+
+  state.enrollmentIdentities = payload.identities;
+  enrollmentValue.textContent = `${payload.identities.length} identities`;
+  renderEnrollmentList();
 };
 
 const cloneBox = (bbox) => ({
@@ -470,7 +514,7 @@ const startCamera = async () => {
 };
 
 const bootstrap = async () => {
-  await startCamera();
+  await Promise.all([startCamera(), loadEnrollmentList()]);
   connectSocket();
 };
 
@@ -501,6 +545,77 @@ qualityInput.addEventListener("input", () => {
 
 intervalValue.textContent = `${state.sampling.intervalMs} ms`;
 qualityValue.textContent = state.sampling.jpegQuality.toFixed(2);
+
+enrollmentForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  if (
+    !(identityNameInput instanceof HTMLInputElement) ||
+    !(identityRoleInput instanceof HTMLInputElement) ||
+    !(identityColorInput instanceof HTMLInputElement) ||
+    !(identityFilesInput instanceof HTMLInputElement)
+  ) {
+    return;
+  }
+
+  const { files } = identityFilesInput;
+  if (files === null || files.length === 0) {
+    enrollmentStatus.textContent = "select at least one file";
+    return;
+  }
+
+  const form = new FormData();
+  form.set("name", identityNameInput.value.trim());
+  form.set("role", identityRoleInput.value.trim());
+  form.set("color", identityColorInput.value.trim());
+  for (const file of files) {
+    form.append("files", file);
+  }
+
+  enrollmentStatus.textContent = "uploading…";
+  const response = await fetch("/api/enrollment", {
+    body: form,
+    method: "POST",
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    enrollmentStatus.textContent = payload.error ?? "upload failed";
+    return;
+  }
+
+  state.enrollmentIdentities = payload.identities;
+  enrollmentValue.textContent = `${payload.identities.length} identities`;
+  renderEnrollmentList();
+  enrollmentStatus.textContent = "uploaded";
+  enrollmentForm.reset();
+  identityColorInput.value = "#4ee3ff";
+});
+
+enrollmentList.addEventListener("click", async (event) => {
+  if (!(event.target instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const identityId = event.target.dataset.id;
+  if (identityId === undefined) {
+    return;
+  }
+
+  enrollmentStatus.textContent = "deleting…";
+  const response = await fetch(`/api/enrollment/${identityId}`, {
+    method: "DELETE",
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    enrollmentStatus.textContent = payload.error ?? "delete failed";
+    return;
+  }
+
+  state.enrollmentIdentities = payload.identities;
+  enrollmentValue.textContent = `${payload.identities.length} identities`;
+  renderEnrollmentList();
+  enrollmentStatus.textContent = "deleted";
+});
 
 window.addEventListener("resize", syncOverlaySize);
 
