@@ -7,13 +7,11 @@
   ],
   "scripts": {
     "build": "turbo run build",
-    "build:aegis": "turbo run build --filter=@maya/aegis",
     "build:serve": "turbo run build --filter=@maya/serve",
     "build:web": "turbo run build --filter=@maya/web",
     "dev": "turbo run dev",
     "check": "turbo run check",
     "check-types": "turbo run check-types",
-    "docker:build:aegis": "docker build -f apps/aegis/Dockerfile apps/aegis -t maya-aegis",
     "docker:build:serve": "docker build -f apps/serve/Dockerfile apps/serve -t maya-serve",
     "docker:build:web": "docker build -f apps/web/Dockerfile apps/web -t maya-web",
     "prepare": "lefthook install"

@@ -20,6 +20,7 @@ from PIL import Image
 
 from .config import Settings
 from .enrollment import IdentityMetadata, directory_signature, scan_enrollment_sources
+from .enrollment_sync import sync_enrollment_from_remote
 from .protocol import dumps, expect_type, parse_message
 from .tracking import MatchCandidate, TrackingController
 
@@ -62,6 +63,8 @@ class FaceRecognitionService:
         self._reload_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
+        if self._settings.enrollment_sync_enabled:
+            await asyncio.to_thread(sync_enrollment_from_remote, self._settings)
         await asyncio.to_thread(self.rebuild_index, True)
         self._reload_task = asyncio.create_task(self._reload_loop())
 
@@ -346,6 +349,11 @@ class FaceRecognitionService:
         while True:
             await asyncio.sleep(self._settings.reload_interval_seconds)
             async with self._index_lock:
+                if self._settings.enrollment_sync_enabled:
+                    await asyncio.to_thread(
+                        sync_enrollment_from_remote,
+                        self._settings,
+                    )
                 await asyncio.to_thread(self.rebuild_index, False)
 
 

@@ -27,6 +27,8 @@ class Settings:
     host: str
     port: int
     enrollment_dir: Path
+    enrollment_sync_base_url: str | None
+    enrollment_sync_enabled: bool
     model_pack: str
     model_root: Path
     detector_width: int
@@ -65,6 +67,8 @@ def load_settings() -> Settings:
         host=os.getenv("MAYA_SERVE_HOST", "127.0.0.1"),
         port=_get_int("MAYA_SERVE_PORT", 8765),
         enrollment_dir=enrollment_dir,
+        enrollment_sync_base_url=os.getenv("MAYA_ENROLLMENT_SYNC_BASE_URL"),
+        enrollment_sync_enabled=_get_bool("MAYA_ENROLLMENT_SYNC_ENABLED", False),
         model_pack=os.getenv("MAYA_MODEL_PACK", "buffalo_l"),
         model_root=Path(
             os.getenv("MAYA_MODEL_ROOT", project_root / ".insightface")
