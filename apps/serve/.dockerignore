@@ -1,0 +1,12 @@
+.git
+.gitignore
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.turbo
+.uv-cache
+.venv
+__pycache__
+*.pyc
+.mplconfig
+Dockerfile

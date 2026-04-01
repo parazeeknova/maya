@@ -1,0 +1,6 @@
+.git
+.gitignore
+.turbo
+dist
+node_modules
+Dockerfile

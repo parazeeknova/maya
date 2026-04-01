@@ -6,7 +6,8 @@
     "build": "vite build",
     "check": "oxlint --config ./.oxlintrc.json --fix src vite.config.ts && oxfmt --config ./.oxfmtrc.jsonc .",
     "check-types": "tsc -p tsconfig.json --noEmit",
-    "dev": "vite"
+    "dev": "vite",
+    "preview": "vite preview --host 0.0.0.0 --port 4173"
   },
   "dependencies": {
     "onnxruntime-web": "^1.24.3"
