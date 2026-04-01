@@ -1,0 +1,140 @@
+name: Deploy Maya Serve
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/serve/**"
+      - ".github/workflows/serve-deploy.yml"
+
+concurrency:
+  group: serve-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/maya-serve
+
+jobs:
+  build-and-push:
+    name: Build and Push Serve Image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./apps/serve
+          file: ./apps/serve/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger Dokploy deployment via API
+        if: success()
+        env:
+          DOKPLOY_API_URL: ${{ secrets.DOKPLOY_API_URL }}
+          DOKPLOY_API_TOKEN: ${{ secrets.DOKPLOY_API_TOKEN }}
+          DOKPLOY_APP_ID: ${{ secrets.DOKPLOY_SERVE_APP_ID }}
+        run: |
+          set -euo pipefail
+
+          response_body="$(mktemp)"
+          response_headers="$(mktemp)"
+
+          http_status="$(
+            curl --silent --show-error \
+              --output "$response_body" \
+              --dump-header "$response_headers" \
+              --write-out '%{http_code}' \
+              -X POST \
+              "${DOKPLOY_API_URL}/api/application.deploy" \
+              -H 'accept: application/json' \
+              -H 'Content-Type: application/json' \
+              -H "x-api-key: ${DOKPLOY_API_TOKEN}" \
+              -H 'User-Agent: GitHub Actions' \
+              --data-raw "{\"applicationId\":\"${DOKPLOY_APP_ID}\"}"
+          )"
+
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+            echo "Dokploy deployment request failed with HTTP ${http_status}."
+            echo "Selected response headers:"
+            grep -Ei '^(HTTP/|content-type:|date:|server:|cf-ray:|cf-cache-status:|x-request-id:)' "$response_headers" || true
+            echo "Response body:"
+            sed -n '1,120p' "$response_body"
+            exit 1
+          fi
+
+          echo "Dokploy deployment triggered successfully (HTTP ${http_status})."
+
+      - name: Wait for deployment health check
+        if: success()
+        env:
+          HEALTH_URL: ${{ secrets.MAYA_SERVE_HEALTH_URL }}
+        run: |
+          echo "Waiting 30s for the new release to come up..."
+          sleep 30
+
+          echo "Checking Maya serve health endpoint..."
+          for i in {1..10}; do
+            if curl -fsS "${HEALTH_URL}" > /dev/null; then
+              echo "Health check passed."
+              exit 0
+            fi
+
+            echo "Attempt $i/10 failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "Maya serve health check failed after 10 attempts."
+          exit 1
+
+  cleanup-old-images:
+    name: Cleanup Old Images
+    needs: build-and-push
+    if: ${{ needs.build-and-push.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+
+    steps:
+      - name: Delete old package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: maya-serve
+          package-type: container
+          min-versions-to-keep: 3
+          delete-only-untagged-versions: false

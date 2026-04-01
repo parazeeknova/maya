@@ -5,9 +5,18 @@ ENV PYTHONUNBUFFERED=1
 ENV UV_CACHE_DIR=/tmp/uv-cache
 ENV UV_LINK_MODE=copy
 ENV MPLCONFIGDIR=/app/.mplconfig
+ENV ALBUMENTATIONS_DISABLE_VERSION_CHECK=1
+ENV LD_LIBRARY_PATH=/app/.venv/lib/python3.14/site-packages/nvidia/cublas/lib:/app/.venv/lib/python3.14/site-packages/nvidia/cuda_runtime/lib:/app/.venv/lib/python3.14/site-packages/nvidia/cuda_nvrtc/lib:/app/.venv/lib/python3.14/site-packages/nvidia/cufft/lib:/usr/lib
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential \
+  && apt-get install -y --no-install-recommends \
+    build-essential \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libxcb1 \
   && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uv
@@ -46,4 +55,4 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 8765
 
-CMD ["sh", "-lc", "ALBUMENTATIONS_DISABLE_VERSION_CHECK=1 LD_LIBRARY_PATH=.venv/lib/python3.14/site-packages/nvidia/cublas/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_runtime/lib:.venv/lib/python3.14/site-packages/nvidia/cuda_nvrtc/lib:.venv/lib/python3.14/site-packages/nvidia/cufft/lib:/usr/lib:$LD_LIBRARY_PATH uv run python main.py"]
+CMD ["/app/.venv/bin/python", "main.py"]
