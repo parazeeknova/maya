@@ -1,5 +1,7 @@
 import { stringifyMessage } from "./protocol";
 import type {
+  PythonAdminMessage,
+  PythonAdminResultMessage,
   ClientFrameSubmitMessage,
   ClientSignalMessage,
   PythonFrameProcessMessage,
@@ -23,6 +25,17 @@ interface PythonStatus {
   reconnecting: boolean;
 }
 
+interface PendingAdminRequest {
+  payload: PythonAdminMessage;
+  resolve: (result: {
+    changed: boolean;
+    enrollment?: PythonServiceReadyMessage["enrollment"];
+    ok: boolean;
+  }) => void;
+  sent: boolean;
+  timeoutId: ReturnType<typeof setTimeout>;
+}
+
 const DISCONNECTED_STATUS: PythonStatus = {
   connected: false,
   detail: "Waiting for Python inference service",
@@ -31,6 +44,7 @@ const DISCONNECTED_STATUS: PythonStatus = {
 };
 
 export class PythonBridge {
+  private readonly pendingAdminRequests: PendingAdminRequest[] = [];
   private readonly pythonUrl: string;
   private readonly sessions = new Map<string, SessionState>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -55,14 +69,57 @@ export class PythonBridge {
     this.sessions.delete(sessionId);
     if (
       this.sessions.size === 0 &&
+      this.pendingAdminRequests.length === 0 &&
       this.upstream?.readyState === WebSocket.OPEN
     ) {
       this.upstream.close(1000, "No active Bun sessions");
     }
   }
 
+  getStatus(): PythonStatus {
+    return this.status;
+  }
+
+  sendAdminMessage(payload: PythonAdminMessage): Promise<{
+    changed: boolean;
+    enrollment?: PythonServiceReadyMessage["enrollment"];
+    ok: boolean;
+  }> {
+    const { promise, resolve } = Promise.withResolvers<{
+      changed: boolean;
+      enrollment?: PythonServiceReadyMessage["enrollment"];
+      ok: boolean;
+    }>();
+    const request: PendingAdminRequest = {
+      payload,
+      resolve,
+      sent: false,
+      timeoutId: setTimeout(() => {
+        this.resolvePendingAdminRequest(request, {
+          changed: false,
+          ok: false,
+        });
+      }, 5000),
+    };
+
+    this.pendingAdminRequests.push(request);
+    this.ensureConnection();
+    this.flushAdminRequests();
+    return promise;
+  }
+
   close(): void {
     this.clearReconnectTimer();
+    while (this.pendingAdminRequests.length > 0) {
+      const [request] = this.pendingAdminRequests;
+      if (request === undefined) {
+        break;
+      }
+      this.resolvePendingAdminRequest(request, {
+        changed: false,
+        ok: false,
+      });
+    }
     if (
       this.upstream &&
       (this.upstream.readyState === WebSocket.CONNECTING ||
@@ -135,6 +192,9 @@ export class PythonBridge {
 
     upstream.addEventListener("close", () => {
       this.upstream = null;
+      for (const request of this.pendingAdminRequests) {
+        request.sent = false;
+      }
       this.setStatus({
         connected: false,
         detail: "Python service disconnected. Reconnecting...",
@@ -145,6 +205,9 @@ export class PythonBridge {
     });
 
     upstream.addEventListener("error", () => {
+      for (const request of this.pendingAdminRequests) {
+        request.sent = false;
+      }
       this.setStatus({
         connected: false,
         detail: "Python service connection error. Retrying...",
@@ -167,6 +230,7 @@ export class PythonBridge {
         ready: this.status.ready,
         reconnecting: false,
       });
+      this.flushAdminRequests();
       for (const sessionId of this.sessions.keys()) {
         this.flushSession(sessionId);
       }
@@ -195,6 +259,7 @@ export class PythonBridge {
 
   private handlePythonMessage(raw: string): void {
     const payload = JSON.parse(raw) as
+      | PythonAdminResultMessage
       | PythonFrameResultMessage
       | PythonServiceReadyMessage;
 
@@ -205,6 +270,21 @@ export class PythonBridge {
         ready: payload,
         reconnecting: false,
       });
+      return;
+    }
+
+    if (payload.type === "admin.result") {
+      const [request] = this.pendingAdminRequests;
+      if (request === undefined) {
+        return;
+      }
+
+      this.resolvePendingAdminRequest(request, {
+        changed: payload.changed,
+        enrollment: payload.enrollment,
+        ok: payload.status === "ok",
+      });
+      this.flushAdminRequests();
       return;
     }
 
@@ -248,5 +328,37 @@ export class PythonBridge {
     for (const session of this.sessions.values()) {
       session.send(message);
     }
+  }
+
+  private flushAdminRequests(): void {
+    const [request] = this.pendingAdminRequests;
+    if (
+      request === undefined ||
+      request.sent ||
+      this.upstream?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    request.sent = true;
+    this.upstream.send(stringifyMessage(request.payload));
+  }
+
+  private resolvePendingAdminRequest(
+    request: PendingAdminRequest,
+    result: {
+      changed: boolean;
+      enrollment?: PythonServiceReadyMessage["enrollment"];
+      ok: boolean;
+    }
+  ): void {
+    const requestIndex = this.pendingAdminRequests.indexOf(request);
+    if (requestIndex === -1) {
+      return;
+    }
+
+    this.pendingAdminRequests.splice(requestIndex, 1);
+    clearTimeout(request.timeoutId);
+    request.resolve(result);
   }
 }

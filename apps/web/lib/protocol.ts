@@ -51,8 +51,15 @@ export interface PythonServiceReadyMessage {
     width: number;
   };
   enrollment: {
-    directory: string;
+    diagnostics: {
+      embeddingCount: number;
+      fileCount: number;
+      id: string;
+      name: string;
+      warnings: string[];
+    }[];
     identities: number;
+    source: string;
     version: number;
     warnings: string[];
   };
@@ -92,6 +99,38 @@ export interface PythonFrameResultMessage {
     width: number;
   };
   type: "frame.result";
+}
+
+export interface PythonAdminIdentityFile {
+  data: string;
+  name: string;
+}
+
+export interface PythonAdminDeleteIdentityMessage {
+  id: string;
+  type: "admin.delete-identity";
+}
+
+export interface PythonAdminUpsertIdentityMessage {
+  files: PythonAdminIdentityFile[];
+  id: string;
+  metadata: {
+    color: string;
+    name: string;
+    role: string;
+  };
+  type: "admin.upsert-identity";
+}
+
+export type PythonAdminMessage =
+  | PythonAdminDeleteIdentityMessage
+  | PythonAdminUpsertIdentityMessage;
+
+export interface PythonAdminResultMessage {
+  changed: boolean;
+  enrollment: PythonServiceReadyMessage["enrollment"];
+  status: "ok";
+  type: "admin.result";
 }
 
 export interface ServerSessionReadyMessage {
@@ -234,5 +273,8 @@ export const parseClientMessage = (
 };
 
 export const stringifyMessage = (
-  message: PythonFrameProcessMessage | ServerToClientMessage
+  message:
+    | PythonAdminMessage
+    | PythonFrameProcessMessage
+    | ServerToClientMessage
 ) => JSON.stringify(message);

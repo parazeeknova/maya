@@ -26,6 +26,7 @@ const indexValue = requiredNode("#index-value");
 const enrollmentForm = requiredNode("#enrollment-form");
 const enrollmentStatus = requiredNode("#enrollment-status");
 const enrollmentList = requiredNode("#enrollment-list");
+const enrollmentDiagnostics = requiredNode("#enrollment-diagnostics");
 const identityNameInput = requiredNode("#identity-name-input");
 const identityRoleInput = requiredNode("#identity-role-input");
 const identityColorInput = requiredNode("#identity-color-input");
@@ -44,6 +45,7 @@ if (overlayContext === null || captureContext === null) {
 }
 
 const state = {
+  enrollmentDiagnostics: [],
   enrollmentIdentities: [],
   frameId: 0,
   framesProcessed: 0,
@@ -88,6 +90,47 @@ const renderEnrollmentList = () => {
   }
 };
 
+const renderEnrollmentDiagnostics = () => {
+  enrollmentDiagnostics.replaceChildren();
+
+  for (const diagnostic of state.enrollmentDiagnostics) {
+    const row = document.createElement("div");
+    row.className = "diagnostic-row";
+    row.innerHTML = `
+      <strong>${diagnostic.name} (${diagnostic.id})</strong>
+      <span>${diagnostic.embeddingCount} embedding(s) from ${diagnostic.fileCount} file(s)</span>
+      <span>${diagnostic.warnings.length > 0 ? diagnostic.warnings.join(" | ") : "ok"}</span>
+    `;
+    enrollmentDiagnostics.append(row);
+  }
+
+  if (state.enrollmentDiagnostics.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "option-note";
+    empty.textContent = "no diagnostics";
+    enrollmentDiagnostics.append(empty);
+  }
+};
+
+const applyEnrollmentSnapshot = (enrollment) => {
+  if (enrollment === null || typeof enrollment !== "object") {
+    return;
+  }
+
+  if (Array.isArray(enrollment.diagnostics)) {
+    state.enrollmentDiagnostics = enrollment.diagnostics;
+    renderEnrollmentDiagnostics();
+  }
+
+  if (typeof enrollment.identities === "number") {
+    enrollmentValue.textContent = `${enrollment.identities} identities`;
+  }
+
+  if (typeof enrollment.version === "number") {
+    indexValue.textContent = String(enrollment.version);
+  }
+};
+
 const loadEnrollmentList = async () => {
   const response = await fetch("/api/enrollment");
   const payload = await response.json();
@@ -96,7 +139,7 @@ const loadEnrollmentList = async () => {
   }
 
   state.enrollmentIdentities = payload.identities;
-  enrollmentValue.textContent = `${payload.identities.length} identities`;
+  applyEnrollmentSnapshot(payload.enrollment);
   renderEnrollmentList();
 };
 
@@ -361,6 +404,7 @@ const handleServerMessage = (message) => {
       trackingValue.textContent = message.ready?.trackingEnabled
         ? "ByteTrack"
         : "off";
+      applyEnrollmentSnapshot(message.ready?.enrollment ?? null);
       break;
     }
     case "session.ready": {
@@ -584,9 +628,18 @@ enrollmentForm.addEventListener("submit", async (event) => {
   }
 
   state.enrollmentIdentities = payload.identities;
-  enrollmentValue.textContent = `${payload.identities.length} identities`;
+  applyEnrollmentSnapshot(payload.reload?.enrollment ?? null);
   renderEnrollmentList();
-  enrollmentStatus.textContent = "uploaded";
+  const failedDiagnostics = state.enrollmentDiagnostics.filter(
+    (diagnostic) => diagnostic.embeddingCount === 0
+  );
+  if (!payload.reload?.ok) {
+    enrollmentStatus.textContent = "uploaded; sync pending";
+  } else if (failedDiagnostics.length > 0) {
+    enrollmentStatus.textContent = "uploaded; no embedding extracted";
+  } else {
+    enrollmentStatus.textContent = "uploaded + synced";
+  }
   enrollmentForm.reset();
   identityColorInput.value = "#4ee3ff";
 });
@@ -612,9 +665,11 @@ enrollmentList.addEventListener("click", async (event) => {
   }
 
   state.enrollmentIdentities = payload.identities;
-  enrollmentValue.textContent = `${payload.identities.length} identities`;
+  applyEnrollmentSnapshot(payload.reload?.enrollment ?? null);
   renderEnrollmentList();
-  enrollmentStatus.textContent = "deleted";
+  enrollmentStatus.textContent = payload.reload?.ok
+    ? "deleted + synced"
+    : "deleted; sync pending";
 });
 
 window.addEventListener("resize", syncOverlaySize);

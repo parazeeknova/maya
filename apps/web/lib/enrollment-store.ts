@@ -1,5 +1,7 @@
 import { S3Client, write } from "bun";
 
+import type { PythonAdminIdentityFile } from "./protocol";
+
 export interface EnrollmentMetadata {
   color: string;
   name: string;
@@ -104,6 +106,18 @@ export const listEnrollmentIdentities = async (): Promise<
   const manifest = await readManifest();
   return manifest.identities;
 };
+
+export const readEnrollmentIdentityFiles = (
+  identity: EnrollmentManifestIdentity
+): Promise<PythonAdminIdentityFile[]> =>
+  Promise.all(
+    identity.files.map(async (filename) => ({
+      data: Buffer.from(
+        await fileFor(`${identity.id}/${filename}`).arrayBuffer()
+      ).toString("base64"),
+      name: filename,
+    }))
+  );
 
 export const upsertEnrollmentIdentity = async (
   metadata: EnrollmentMetadata & { id: string },

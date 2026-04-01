@@ -4,6 +4,7 @@ import {
   deleteEnrollmentIdentity,
   isEnrollmentStoreConfigured,
   listEnrollmentIdentities,
+  readEnrollmentIdentityFiles,
   upsertEnrollmentIdentity,
 } from "./lib/enrollment-store";
 import {
@@ -60,6 +61,36 @@ const buildIdentityId = (
   return candidate;
 };
 
+const syncStoredEnrollmentToServe = async (
+  identities: Awaited<ReturnType<typeof listEnrollmentIdentities>>
+) => {
+  const { ready } = bridge.getStatus();
+  const shouldHydrate =
+    identities.length > 0 &&
+    (ready === null ||
+      (ready.enrollment.identities === 0 &&
+        ready.enrollment.diagnostics.length === 0));
+
+  if (!shouldHydrate) {
+    return ready?.enrollment ?? null;
+  }
+
+  let enrollment = ready?.enrollment ?? null;
+  for (const identity of identities) {
+    const result = await bridge.sendAdminMessage({
+      files: await readEnrollmentIdentityFiles(identity),
+      id: identity.id,
+      metadata: identity.metadata,
+      type: "admin.upsert-identity",
+    });
+    if (result.ok && result.enrollment !== undefined) {
+      ({ enrollment } = result);
+    }
+  }
+
+  return enrollment;
+};
+
 const handleEnrollmentRequest = async (req: Request): Promise<Response> => {
   if (!isEnrollmentStoreConfigured()) {
     return json(
@@ -73,7 +104,11 @@ const handleEnrollmentRequest = async (req: Request): Promise<Response> => {
   const url = new URL(req.url);
   if (req.method === "GET" && url.pathname === "/api/enrollment") {
     const identities = await listEnrollmentIdentities();
-    return json({ identities });
+    const enrollment = await syncStoredEnrollmentToServe(identities);
+    return json({
+      enrollment,
+      identities,
+    });
   }
 
   if (req.method === "POST" && url.pathname === "/api/enrollment") {
@@ -110,7 +145,22 @@ const handleEnrollmentRequest = async (req: Request): Promise<Response> => {
       },
       files
     );
-    return json({ identities });
+    const reload = await bridge.sendAdminMessage({
+      files: await Promise.all(
+        files.map(async (file) => ({
+          data: Buffer.from(await file.arrayBuffer()).toString("base64"),
+          name: file.name,
+        }))
+      ),
+      id,
+      metadata: {
+        color,
+        name,
+        role,
+      },
+      type: "admin.upsert-identity",
+    });
+    return json({ identities, reload });
   }
 
   if (req.method === "DELETE" && url.pathname.startsWith("/api/enrollment/")) {
@@ -122,7 +172,11 @@ const handleEnrollmentRequest = async (req: Request): Promise<Response> => {
     }
 
     const identities = await deleteEnrollmentIdentity(identityId);
-    return json({ identities });
+    const reload = await bridge.sendAdminMessage({
+      id: identityId,
+      type: "admin.delete-identity",
+    });
+    return json({ identities, reload });
   }
 
   return json({ error: "Not found" }, 404);
@@ -171,6 +225,14 @@ const server = Bun.serve({
 
     if (url.pathname === "/client.js") {
       return asset("client.js");
+    }
+
+    if (
+      url.pathname === "/favicon.ico" ||
+      url.pathname === "/favicon.svg" ||
+      url.pathname === "/maya.svg"
+    ) {
+      return asset("maya.svg");
     }
 
     if (url.pathname === "/styles.css") {

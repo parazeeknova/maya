@@ -10,17 +10,24 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import faiss
 import numpy as np
 import onnxruntime as ort
 from insightface.app import FaceAnalysis
-from PIL import Image
+from PIL import Image, ImageOps
 
 from .config import Settings
-from .enrollment import IdentityMetadata, directory_signature, scan_enrollment_sources
-from .enrollment_sync import sync_enrollment_from_remote
+from .enrollment import (
+    EnrollmentImage,
+    EnrollmentSource,
+    IdentityMetadata,
+    SourceSignature,
+    build_source,
+    source_signature,
+)
+from .enrollment_sync import load_remote_enrollment_sources
 from .protocol import dumps, expect_type, parse_message
 from .tracking import MatchCandidate, TrackingController
 
@@ -36,8 +43,9 @@ class IdentityRecord:
 
 @dataclass(frozen=True, slots=True)
 class IndexState:
+    diagnostics: tuple[dict[str, Any], ...]
     version: int
-    signature: tuple[tuple[str, int, int], ...]
+    signature: SourceSignature
     records: tuple[IdentityRecord, ...]
     index: faiss.IndexFlatIP | None
     reference_identity_ids: tuple[str, ...]
@@ -52,6 +60,7 @@ class FaceRecognitionService:
             TrackingController(settings) if settings.tracking_enabled else None
         )
         self._index_state = IndexState(
+            diagnostics=tuple(),
             version=0,
             signature=tuple(),
             records=tuple(),
@@ -59,14 +68,22 @@ class FaceRecognitionService:
             reference_identity_ids=tuple(),
             warnings=tuple(),
         )
+        self._enrollment_sources: tuple[EnrollmentSource, ...] = tuple()
         self._index_lock = asyncio.Lock()
         self._reload_task: asyncio.Task[None] | None = None
+        self._sync_warning: str | None = None
 
     async def start(self) -> None:
         if self._settings.enrollment_sync_enabled:
-            await asyncio.to_thread(sync_enrollment_from_remote, self._settings)
+            await self._sync_remote_enrollment()
         await asyncio.to_thread(self.rebuild_index, True)
         self._reload_task = asyncio.create_task(self._reload_loop())
+
+    async def refresh_enrollment(self) -> bool:
+        async with self._index_lock:
+            if self._settings.enrollment_sync_enabled:
+                await self._sync_remote_enrollment()
+            return await asyncio.to_thread(self.rebuild_index, True)
 
     async def stop(self) -> None:
         if self._reload_task is not None:
@@ -90,10 +107,14 @@ class FaceRecognitionService:
                 "topK": self._settings.match_top_k,
             },
             "enrollment": {
-                "directory": str(self._settings.enrollment_dir),
+                "diagnostics": list(self._index_state.diagnostics),
                 "identities": len(self._index_state.records),
+                "source": self._settings.enrollment_sync_base_url or "memory",
                 "version": self._index_state.version,
-                "warnings": list(self._index_state.warnings),
+                "warnings": [
+                    *list(self._index_state.warnings),
+                    *([self._sync_warning] if self._sync_warning is not None else []),
+                ],
             },
             "trackingConfig": {
                 "boxSmoothingAlpha": self._settings.tracker_box_smoothing_alpha,
@@ -104,27 +125,126 @@ class FaceRecognitionService:
 
     async def handle_raw_message(self, message: str | bytes) -> str:
         payload = parse_message(message)
-        expect_type(payload, "frame.process")
-        response = await asyncio.to_thread(self._process_frame, payload)
+        message_type = payload.get("type")
+        if message_type == "frame.process":
+            response = await asyncio.to_thread(self._process_frame, payload)
+        elif message_type == "admin.upsert-identity":
+            response = await self._handle_admin_upsert(payload)
+        elif message_type == "admin.delete-identity":
+            response = await self._handle_admin_delete(payload)
+        else:
+            expect_type(payload, "frame.process")
+            raise AssertionError("Unreachable")
         return dumps(response)
 
+    async def _handle_admin_upsert(self, payload: dict[str, Any]) -> dict[str, Any]:
+        identity_id = payload.get("id")
+        metadata = payload.get("metadata")
+        files = payload.get("files")
+        if (
+            not isinstance(identity_id, str)
+            or not isinstance(metadata, dict)
+            or not isinstance(files, list)
+        ):
+            raise ValueError("Invalid admin upsert payload.")
+
+        metadata_payload = cast(dict[str, Any], metadata)
+        file_payloads = cast(list[object], files)
+        source = build_source(
+            identity_id,
+            metadata_payload,
+            tuple(self._parse_admin_images(file_payloads)),
+        )
+
+        async with self._index_lock:
+            self._enrollment_sources = tuple(
+                sorted(
+                    (
+                        *(
+                            existing
+                            for existing in self._enrollment_sources
+                            if existing.metadata.id != identity_id
+                        ),
+                        source,
+                    ),
+                    key=lambda candidate: candidate.metadata.id,
+                )
+            )
+            changed = await asyncio.to_thread(self.rebuild_index, True)
+        return {
+            "changed": changed,
+            "enrollment": self.ready_message()["enrollment"],
+            "status": "ok",
+            "type": "admin.result",
+        }
+
+    async def _handle_admin_delete(self, payload: dict[str, Any]) -> dict[str, Any]:
+        identity_id = payload.get("id")
+        if not isinstance(identity_id, str):
+            raise ValueError("Invalid admin delete payload.")
+
+        async with self._index_lock:
+            self._enrollment_sources = tuple(
+                source
+                for source in self._enrollment_sources
+                if source.metadata.id != identity_id
+            )
+            changed = await asyncio.to_thread(self.rebuild_index, True)
+        return {
+            "changed": changed,
+            "enrollment": self.ready_message()["enrollment"],
+            "status": "ok",
+            "type": "admin.result",
+        }
+
     def rebuild_index(self, force: bool = False) -> bool:
-        signature = directory_signature(self._settings.enrollment_dir)
+        signature = source_signature(self._enrollment_sources)
         if not force and signature == self._index_state.signature:
             return False
 
-        sources, warnings = scan_enrollment_sources(self._settings.enrollment_dir)
+        sources = self._enrollment_sources
+        warnings: list[str] = []
+        diagnostics: list[dict[str, Any]] = []
         records: list[IdentityRecord] = []
         reference_identity_ids: list[str] = []
         vectors: list[np.ndarray] = []
 
         for source in sources:
-            embeddings = self._load_identity_embeddings(source.image_paths, warnings)
+            if not source.images:
+                warning = (
+                    f"Skipping '{source.metadata.id}' because it has "
+                    "no reference images."
+                )
+                warnings.append(warning)
+                diagnostics.append(
+                    {
+                        "embeddingCount": 0,
+                        "fileCount": 0,
+                        "id": source.metadata.id,
+                        "name": source.metadata.name,
+                        "warnings": [warning],
+                    }
+                )
+                continue
+
+            embeddings, embedding_warnings = self._load_identity_embeddings(
+                source.images,
+            )
             if not embeddings:
-                warnings.append(
+                warning = (
                     "Skipping "
                     f"'{source.metadata.id}' because no usable faces "
                     "were found in its references."
+                )
+                warnings.append(warning)
+                diagnostics.append(
+                    {
+                        "embeddingCount": 0,
+                        "fileCount": len(source.images),
+                        "id": source.metadata.id,
+                        "name": source.metadata.name,
+                        "warnings": [*embedding_warnings, warning],
+                    }
                 )
                 continue
 
@@ -137,6 +257,16 @@ class FaceRecognitionService:
                     references=len(embeddings),
                 )
             )
+            diagnostics.append(
+                {
+                    "embeddingCount": len(embeddings),
+                    "fileCount": len(source.images),
+                    "id": source.metadata.id,
+                    "name": source.metadata.name,
+                    "warnings": embedding_warnings,
+                }
+            )
+            warnings.extend(embedding_warnings)
 
         if vectors:
             matrix = np.vstack(vectors).astype(np.float32)
@@ -146,6 +276,7 @@ class FaceRecognitionService:
             index = None
 
         self._index_state = IndexState(
+            diagnostics=tuple(diagnostics),
             version=self._index_state.version + 1,
             signature=signature,
             records=tuple(records),
@@ -181,23 +312,23 @@ class FaceRecognitionService:
 
     def _load_identity_embeddings(
         self,
-        image_paths: tuple[Path, ...],
-        warnings: list[str],
-    ) -> list[np.ndarray]:
+        images: tuple[EnrollmentImage, ...],
+    ) -> tuple[list[np.ndarray], list[str]]:
         embeddings: list[np.ndarray] = []
-        for image_path in image_paths:
-            image = self._decode_image_bytes(image_path.read_bytes())
+        warnings: list[str] = []
+        for image_payload in images:
+            image = self._decode_image_bytes(image_payload.data)
             faces = self._analysis.get(image)
             if not faces:
                 warnings.append(
-                    f"No face detected in enrollment image {image_path.name}."
+                    f"No face detected in enrollment image {image_payload.name}."
                 )
                 continue
 
             face = max(faces, key=lambda candidate: _box_area(candidate.bbox))
             embeddings.append(_normalized_embedding(face))
 
-        return embeddings
+        return embeddings, warnings
 
     def _process_frame(self, payload: dict[str, Any]) -> dict[str, Any]:
         started_at = time.time_ns()
@@ -341,7 +472,7 @@ class FaceRecognitionService:
         return self._decode_image_bytes(base64.b64decode(data))
 
     def _decode_image_bytes(self, data: bytes) -> np.ndarray:
-        image = Image.open(io.BytesIO(data)).convert("RGB")
+        image = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
         rgb = np.asarray(image, dtype=np.uint8)
         return np.ascontiguousarray(rgb[:, :, ::-1])
 
@@ -350,11 +481,41 @@ class FaceRecognitionService:
             await asyncio.sleep(self._settings.reload_interval_seconds)
             async with self._index_lock:
                 if self._settings.enrollment_sync_enabled:
-                    await asyncio.to_thread(
-                        sync_enrollment_from_remote,
-                        self._settings,
-                    )
+                    await self._sync_remote_enrollment()
                 await asyncio.to_thread(self.rebuild_index, False)
+
+    async def _sync_remote_enrollment(self) -> None:
+        try:
+            self._enrollment_sources = await asyncio.to_thread(
+                load_remote_enrollment_sources,
+                self._settings,
+            )
+            self._sync_warning = None
+        except Exception as error:
+            self._sync_warning = (
+                f"Remote enrollment sync failed: {error.__class__.__name__}: {error}"
+            )
+
+    def _parse_admin_images(
+        self,
+        file_payloads: list[object],
+    ) -> list[EnrollmentImage]:
+        images: list[EnrollmentImage] = []
+        for file_payload in file_payloads:
+            if not isinstance(file_payload, dict):
+                raise ValueError("Invalid file payload.")
+            file_data = cast(dict[str, Any], file_payload)
+            filename = file_data.get("name")
+            data = file_data.get("data")
+            if not isinstance(filename, str) or not isinstance(data, str):
+                raise ValueError("Invalid file payload.")
+            images.append(
+                EnrollmentImage(
+                    data=base64.b64decode(data),
+                    name=filename,
+                )
+            )
+        return images
 
 
 def _normalized_embedding(face: Face) -> np.ndarray:

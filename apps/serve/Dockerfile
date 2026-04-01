@@ -19,7 +19,6 @@ ENV INSIGHTFACE_MODEL_PACK=${INSIGHTFACE_MODEL_PACK}
 
 COPY .python-version ./
 COPY package.json pyproject.toml uv.lock main.py ./
-COPY data ./data
 COPY maya_serve ./maya_serve
 COPY stubs ./stubs
 

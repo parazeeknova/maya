@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import http
 import signal
+from collections.abc import Awaitable, Callable
 
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+from websockets.http11 import Request, Response
 
 from maya_serve import (
     FaceRecognitionService,
@@ -34,6 +37,32 @@ async def handle_connection(
         )
 
 
+def handle_process_request(
+    service: FaceRecognitionService,
+) -> Callable[[ServerConnection, Request], Awaitable[Response | None]]:
+    async def process_request(
+        connection: ServerConnection,
+        request: Request,
+    ) -> Response | None:
+        if request.path == "/healthz":
+            return connection.respond(http.HTTPStatus.OK, "ok\n")
+        if request.path == "/admin/reload":
+            changed = await service.refresh_enrollment()
+            return connection.respond(
+                http.HTTPStatus.OK,
+                dumps(
+                    {
+                        "changed": changed,
+                        "enrollment": service.ready_message()["enrollment"],
+                        "status": "ok",
+                    }
+                ),
+            )
+        return None
+
+    return process_request
+
+
 async def main() -> None:
     install_runtime_compatibility_patches()
     settings = load_settings()
@@ -46,6 +75,7 @@ async def main() -> None:
             settings.host,
             settings.port,
             max_size=8 * 1024 * 1024,
+            process_request=handle_process_request(service),
         ) as server:
             loop = asyncio.get_running_loop()
             for shutdown_signal in (signal.SIGINT, signal.SIGTERM):
@@ -53,7 +83,7 @@ async def main() -> None:
                     loop.add_signal_handler(shutdown_signal, server.close)
             print(
                 f"Maya serve listening on ws://{settings.host}:{settings.port} "
-                f"(enrollment dir: {settings.enrollment_dir})"
+                f"(enrollment source: {settings.enrollment_sync_base_url or 'memory'})"
             )
             await server.wait_closed()
     finally:

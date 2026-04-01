@@ -1,7 +1,8 @@
 :root {
   color-scheme: dark;
-  --border: rgba(255, 255, 255, 0.14);
-  --panel: rgba(8, 12, 18, 0.9);
+  --border: rgba(255, 255, 255, 0.12);
+  --panel: rgba(6, 9, 14, 0.84);
+  --panel-shadow: rgba(0, 0, 0, 0.34);
   --text: #f6f8fb;
   --text-muted: rgba(246, 248, 251, 0.64);
 }
@@ -48,24 +49,23 @@ body {
 
 .menu-shell {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 14px;
+  right: 14px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
   z-index: 10;
 }
 
 .menu-button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--border);
-  border-radius: 0;
-  background: rgba(0, 0, 0, 0.72);
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
   font: inherit;
@@ -74,30 +74,23 @@ body {
   line-height: 1;
   list-style: none;
   user-select: none;
+  transition: transform 160ms ease;
 }
 
 .menu-button::-webkit-details-marker {
   display: none;
 }
 
-.menu-button[data-state="connected"] {
-  border-color: rgba(78, 227, 255, 0.48);
-  color: #4ee3ff;
+.menu-button:hover {
+  transform: translateY(-1px);
 }
 
-.menu-button[data-state="python-ready"] {
-  border-color: rgba(182, 255, 99, 0.52);
-  color: #b6ff63;
-}
-
-.menu-button[data-state="python-wait"] {
-  border-color: rgba(255, 209, 102, 0.52);
-  color: #ffd166;
-}
-
-.menu-button[data-state="error"] {
-  border-color: rgba(255, 107, 136, 0.52);
-  color: #ff6b88;
+.menu-logo {
+  display: block;
+  width: 36px;
+  height: auto;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.34));
+  pointer-events: none;
 }
 
 .options-panel {
@@ -106,8 +99,14 @@ body {
   width: min(220px, calc(100vw - 24px));
   padding: 10px;
   border: 1px solid var(--border);
-  background: var(--panel);
-  backdrop-filter: blur(16px);
+  border-radius: 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(8, 12, 18, 0.88),
+    rgba(4, 6, 10, 0.9)
+  );
+  box-shadow: 0 22px 52px -28px var(--panel-shadow);
+  backdrop-filter: blur(18px);
 }
 
 .menu-shell:not([open]) .options-panel {
@@ -154,6 +153,7 @@ body {
 .tiny-button {
   width: 100%;
   border: 1px solid var(--border);
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
   font: inherit;
@@ -196,9 +196,25 @@ body {
   font-size: 0.62rem;
 }
 
+.diagnostic-row {
+  display: grid;
+  gap: 3px;
+}
+
+.diagnostic-row strong {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.diagnostic-row span {
+  color: var(--text-muted);
+  font-size: 0.62rem;
+}
+
 .identity-delete {
   padding: 4px 6px;
   border: 1px solid var(--border);
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
   cursor: pointer;

@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Maya Camera View</title>
+    <title>maya</title>
+    <link rel="icon" type="image/svg+xml" href="/maya.svg" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -13,7 +14,19 @@
       <canvas id="capture-canvas" hidden></canvas>
 
       <details id="menu-shell" class="menu-shell">
-        <summary id="menu-toggle" class="menu-button">≡</summary>
+        <summary
+          id="menu-toggle"
+          class="menu-button"
+          aria-label="Open controls"
+        >
+          <img
+            class="menu-logo"
+            src="/maya.svg"
+            alt="Maya"
+            width="20"
+            height="20"
+          />
+        </summary>
 
         <section id="options-panel" class="options-panel">
           <div class="option-row">
@@ -122,6 +135,11 @@
           <div class="option-group">
             <span class="option-label">Stored identities</span>
             <div id="enrollment-list" class="identity-list"></div>
+          </div>
+
+          <div class="option-group">
+            <span class="option-label">Enrollment diagnostics</span>
+            <div id="enrollment-diagnostics" class="identity-list"></div>
           </div>
         </section>
       </details>
