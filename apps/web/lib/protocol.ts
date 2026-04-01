@@ -45,6 +45,17 @@ export interface PythonFrameProcessMessage {
   type: "frame.process";
 }
 
+export interface IdentityMetadataPayload {
+  color: string;
+  email?: string;
+  githubUsername?: string;
+  id: string;
+  linkedinId?: string;
+  name: string;
+  phoneNumber?: string;
+  worksAt?: string;
+}
+
 export interface PythonServiceReadyMessage {
   detectorSize: {
     height: number;
@@ -79,12 +90,7 @@ export interface PythonFrameResultMessage {
       y: number;
     };
     confidence: number;
-    identity: {
-      color: string;
-      id: string;
-      name: string;
-      role: string;
-    } | null;
+    identity: IdentityMetadataPayload | null;
     isUnknown: boolean;
     trackId: number | null;
   }[];
@@ -114,11 +120,7 @@ export interface PythonAdminDeleteIdentityMessage {
 export interface PythonAdminUpsertIdentityMessage {
   files: PythonAdminIdentityFile[];
   id: string;
-  metadata: {
-    color: string;
-    name: string;
-    role: string;
-  };
+  metadata: Omit<IdentityMetadataPayload, "id">;
   type: "admin.upsert-identity";
 }
 

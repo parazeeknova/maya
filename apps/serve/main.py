@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import http
+import logging
 import signal
 from collections.abc import Awaitable, Callable
 
@@ -16,6 +17,11 @@ from maya_serve import (
     load_settings,
 )
 from maya_serve.protocol import dumps
+
+
+class IgnoreInvalidUpgradeFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.getMessage() != "opening handshake failed"
 
 
 async def handle_connection(
@@ -67,6 +73,8 @@ async def main() -> None:
     install_runtime_compatibility_patches()
     settings = load_settings()
     service = FaceRecognitionService(settings)
+    websocket_logger = logging.getLogger("maya_serve.websockets")
+    websocket_logger.addFilter(IgnoreInvalidUpgradeFilter())
     await service.start()
 
     try:
@@ -74,6 +82,7 @@ async def main() -> None:
             lambda websocket: handle_connection(websocket, service),
             settings.host,
             settings.port,
+            logger=websocket_logger,
             max_size=8 * 1024 * 1024,
             process_request=handle_process_request(service),
         ) as server:

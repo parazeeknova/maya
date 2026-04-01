@@ -4,8 +4,12 @@ import type { PythonAdminIdentityFile } from "./protocol";
 
 export interface EnrollmentMetadata {
   color: string;
+  email?: string;
+  githubUsername?: string;
+  linkedinId?: string;
   name: string;
-  role: string;
+  phoneNumber?: string;
+  worksAt?: string;
 }
 
 export interface EnrollmentManifestIdentity {
@@ -100,6 +104,24 @@ const deleteKeys = async (keys: string[]): Promise<void> => {
   }
 };
 
+const normalizeMetadata = (
+  metadata: EnrollmentMetadata
+): EnrollmentMetadata => ({
+  color: metadata.color,
+  ...(metadata.email === undefined ? {} : { email: metadata.email }),
+  ...(metadata.githubUsername === undefined
+    ? {}
+    : { githubUsername: metadata.githubUsername }),
+  ...(metadata.linkedinId === undefined
+    ? {}
+    : { linkedinId: metadata.linkedinId }),
+  name: metadata.name,
+  ...(metadata.phoneNumber === undefined
+    ? {}
+    : { phoneNumber: metadata.phoneNumber }),
+  ...(metadata.worksAt === undefined ? {} : { worksAt: metadata.worksAt }),
+});
+
 export const listEnrollmentIdentities = async (): Promise<
   EnrollmentManifestIdentity[]
 > => {
@@ -139,11 +161,7 @@ export const upsertEnrollmentIdentity = async (
 
   await write(
     fileFor(`${metadata.id}/metadata.json`),
-    JSON.stringify({
-      color: metadata.color,
-      name: metadata.name,
-      role: metadata.role,
-    })
+    JSON.stringify(normalizeMetadata(metadata))
   );
 
   if (staleFiles.length > 0) {
@@ -155,11 +173,7 @@ export const upsertEnrollmentIdentity = async (
   const nextIdentity: EnrollmentManifestIdentity = {
     files: nextFiles,
     id: metadata.id,
-    metadata: {
-      color: metadata.color,
-      name: metadata.name,
-      role: metadata.role,
-    },
+    metadata: normalizeMetadata(metadata),
   };
 
   const identities = manifest.identities.filter(

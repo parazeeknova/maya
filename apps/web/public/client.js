@@ -28,8 +28,12 @@ const enrollmentStatus = requiredNode("#enrollment-status");
 const enrollmentList = requiredNode("#enrollment-list");
 const enrollmentDiagnostics = requiredNode("#enrollment-diagnostics");
 const identityNameInput = requiredNode("#identity-name-input");
-const identityRoleInput = requiredNode("#identity-role-input");
+const identityWorksAtInput = requiredNode("#identity-works-at-input");
 const identityColorInput = requiredNode("#identity-color-input");
+const identityLinkedinInput = requiredNode("#identity-linkedin-input");
+const identityGithubInput = requiredNode("#identity-github-input");
+const identityEmailInput = requiredNode("#identity-email-input");
+const identityPhoneInput = requiredNode("#identity-phone-input");
 const identityFilesInput = requiredNode("#identity-files-input");
 /** @type {HTMLInputElement} */
 const intervalInput = requiredNode("#interval-input");
@@ -75,7 +79,7 @@ const renderEnrollmentList = () => {
     row.innerHTML = `
       <div>
         <strong>${identity.metadata.name}</strong>
-        <span>${identity.id} · ${identity.metadata.role} · ${identity.files.length} file(s)</span>
+        <span>${identity.id} · ${identity.files.length} file(s)</span>
       </div>
       <button class="identity-delete" data-id="${identity.id}" type="button">Delete</button>
     `;
@@ -141,6 +145,142 @@ const loadEnrollmentList = async () => {
   state.enrollmentIdentities = payload.identities;
   applyEnrollmentSnapshot(payload.enrollment);
   renderEnrollmentList();
+};
+
+const collectEnrollmentSubmission = () => {
+  if (
+    !(identityNameInput instanceof HTMLInputElement) ||
+    !(identityWorksAtInput instanceof HTMLInputElement) ||
+    !(identityColorInput instanceof HTMLInputElement) ||
+    !(identityLinkedinInput instanceof HTMLInputElement) ||
+    !(identityGithubInput instanceof HTMLInputElement) ||
+    !(identityEmailInput instanceof HTMLInputElement) ||
+    !(identityPhoneInput instanceof HTMLInputElement) ||
+    !(identityFilesInput instanceof HTMLInputElement)
+  ) {
+    return null;
+  }
+
+  const { files } = identityFilesInput;
+  if (files === null || files.length === 0) {
+    return {
+      error: "select at least one file",
+    };
+  }
+
+  const form = new FormData();
+  form.set("name", identityNameInput.value.trim());
+  form.set("color", identityColorInput.value.trim());
+
+  for (const [field, value] of [
+    ["worksAt", optionalInputValue(identityWorksAtInput)],
+    ["linkedinId", optionalInputValue(identityLinkedinInput)],
+    ["githubUsername", optionalInputValue(identityGithubInput)],
+    ["email", optionalInputValue(identityEmailInput)],
+    ["phoneNumber", optionalInputValue(identityPhoneInput)],
+  ]) {
+    if (value !== undefined) {
+      form.set(field, value);
+    }
+  }
+
+  for (const file of files) {
+    form.append("files", file);
+  }
+
+  return { form };
+};
+
+const applyEnrollmentReload = (payload) => {
+  state.enrollmentIdentities = payload.identities;
+  applyEnrollmentSnapshot(payload.reload?.enrollment ?? null);
+  renderEnrollmentList();
+};
+
+const optionalInputValue = (input) => {
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const normalized = input.value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+};
+
+const getIdentityDetailRows = (identity) => {
+  if (identity === null) {
+    return [];
+  }
+
+  return [
+    identity.worksAt
+      ? {
+          label: "WORK",
+          value: identity.worksAt,
+        }
+      : null,
+    identity.linkedinId
+      ? {
+          label: "IN",
+          value: identity.linkedinId,
+        }
+      : null,
+    identity.githubUsername
+      ? {
+          label: "GH",
+          value: identity.githubUsername,
+        }
+      : null,
+    identity.email
+      ? {
+          label: "MAIL",
+          value: identity.email,
+        }
+      : null,
+    identity.phoneNumber
+      ? {
+          label: "TEL",
+          value: identity.phoneNumber,
+        }
+      : null,
+  ].filter((row) => row !== null);
+};
+
+const measureTrackLayout = (headerLabel, confidenceText, detailRows) => {
+  overlayContext.font = '14px "Cascadia Mono", monospace';
+  const chipLabel = `${headerLabel} · ${confidenceText}`;
+  const chipWidth = overlayContext.measureText(chipLabel).width + 20;
+
+  if (detailRows.length === 0) {
+    return {
+      cardHeight: 0,
+      cardWidth: 0,
+      chipLabel,
+      chipWidth,
+      labelWidth: 0,
+      rowHeight: 20,
+      valueOffset: 0,
+    };
+  }
+
+  overlayContext.font = '12px "Cascadia Mono", monospace';
+  const labelWidth = Math.max(
+    ...detailRows.map((row) => overlayContext.measureText(row.label).width)
+  );
+  const valueWidth = Math.max(
+    ...detailRows.map((row) => overlayContext.measureText(row.value).width)
+  );
+  const cardWidth = Math.max(176, labelWidth + valueWidth + 44);
+  const rowHeight = 20;
+
+  return {
+    cardHeight: 18 + detailRows.length * rowHeight,
+    cardWidth,
+    chipLabel,
+    chipWidth,
+    labelWidth,
+    rowHeight,
+    valueOffset: 20 + labelWidth,
+  };
 };
 
 const cloneBox = (bbox) => ({
@@ -239,6 +379,9 @@ const updateRenderTracks = (message) => {
     const existing = state.renderTracks.get(key);
     const fromBox = existing ? getTrackBox(existing, now) : cloneBox(face.bbox);
     const { identity } = face;
+    const confidenceText = `${(face.confidence * 100).toFixed(0)}%`;
+    const detailRows = getIdentityDetailRows(identity);
+    const headerLabel = identity ? identity.name : "unknown";
     const transitionDuration = Math.max(48, message.sampleIntervalMs * 0.9);
     const velocity =
       existing === undefined
@@ -250,12 +393,12 @@ const updateRenderTracks = (message) => {
 
     activeKeys.add(key);
     state.renderTracks.set(key, {
-      color: identity?.color ?? "#ffffff",
+      confidenceText,
+      detailRows,
       fadeDuration,
       fromBox,
-      label: identity
-        ? `${identity.name} · ${identity.role} · ${(face.confidence * 100).toFixed(0)}%`
-        : `unknown · ${(face.confidence * 100).toFixed(0)}%`,
+      headerLabel,
+      layout: measureTrackLayout(headerLabel, confidenceText, detailRows),
       maxPredictionMs: Math.max(90, message.sampleIntervalMs * 1.2),
       removeAfter: null,
       sourceSize: message.sourceSize,
@@ -299,14 +442,13 @@ const drawOverlay = () => {
   const now = performance.now();
 
   overlayContext.font = '14px "Cascadia Mono", monospace';
-  overlayContext.lineWidth = 3;
+  overlayContext.lineWidth = 2;
   overlayContext.textBaseline = "top";
 
   for (const [key, track] of state.renderTracks.entries()) {
     const scaleX = overlayCanvas.width / track.sourceSize.width;
     const scaleY = overlayCanvas.height / track.sourceSize.height;
     const box = getTrackBox(track, now);
-    const { color } = track;
     const width = box.width * scaleX;
     const height = box.height * scaleY;
     const x = box.x * scaleX;
@@ -324,22 +466,48 @@ const drawOverlay = () => {
       }
     }
 
-    overlayContext.shadowBlur = 18;
-    overlayContext.shadowColor = `${color}${Math.round(alpha * 102)
-      .toString(16)
-      .padStart(2, "0")}`;
-    overlayContext.strokeStyle = color;
+    overlayContext.shadowBlur = 0;
+    overlayContext.strokeStyle = "rgba(255, 255, 255, 0.92)";
     overlayContext.globalAlpha = alpha;
     overlayContext.strokeRect(x, y, width, height);
 
     const chipHeight = 28;
-    const chipWidth = overlayContext.measureText(track.label).width + 20;
+    const { layout } = track;
     const chipY = Math.max(8, y - chipHeight - 8);
 
-    overlayContext.fillStyle = color;
-    overlayContext.fillRect(x, chipY, chipWidth, chipHeight);
-    overlayContext.fillStyle = "#000";
-    overlayContext.fillText(track.label, x + 10, chipY + 6);
+    overlayContext.fillStyle = "rgba(8, 10, 14, 0.66)";
+    overlayContext.fillRect(x, chipY, layout.chipWidth, chipHeight);
+    overlayContext.fillStyle = "#fff";
+    overlayContext.fillText(layout.chipLabel, x + 10, chipY + 6);
+
+    if (track.detailRows.length > 0) {
+      overlayContext.font = '12px "Cascadia Mono", monospace';
+      const preferredX = x + width + 12;
+      const cardX =
+        preferredX + layout.cardWidth <= overlayCanvas.width - 8
+          ? preferredX
+          : Math.max(8, x - layout.cardWidth - 12);
+      const cardY = Math.max(8, y);
+
+      overlayContext.fillStyle = "rgba(8, 10, 14, 0.62)";
+      overlayContext.fillRect(
+        cardX,
+        cardY,
+        layout.cardWidth,
+        layout.cardHeight
+      );
+
+      for (const [detailIndex, row] of track.detailRows.entries()) {
+        const rowY = cardY + 10 + detailIndex * layout.rowHeight;
+        overlayContext.fillStyle = "rgba(255, 255, 255, 0.48)";
+        overlayContext.fillText(row.label, cardX + 12, rowY);
+        overlayContext.fillStyle = "#fff";
+        overlayContext.fillText(row.value, cardX + layout.valueOffset, rowY);
+      }
+
+      overlayContext.font = '14px "Cascadia Mono", monospace';
+      overlayContext.lineWidth = 2;
+    }
   }
 
   overlayContext.globalAlpha = 1;
@@ -599,32 +767,19 @@ qualityValue.textContent = state.sampling.jpegQuality.toFixed(2);
 enrollmentForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  if (
-    !(identityNameInput instanceof HTMLInputElement) ||
-    !(identityRoleInput instanceof HTMLInputElement) ||
-    !(identityColorInput instanceof HTMLInputElement) ||
-    !(identityFilesInput instanceof HTMLInputElement)
-  ) {
+  const submission = collectEnrollmentSubmission();
+  if (submission === null) {
     return;
   }
 
-  const { files } = identityFilesInput;
-  if (files === null || files.length === 0) {
-    enrollmentStatus.textContent = "select at least one file";
+  if ("error" in submission) {
+    enrollmentStatus.textContent = submission.error;
     return;
-  }
-
-  const form = new FormData();
-  form.set("name", identityNameInput.value.trim());
-  form.set("role", identityRoleInput.value.trim());
-  form.set("color", identityColorInput.value.trim());
-  for (const file of files) {
-    form.append("files", file);
   }
 
   enrollmentStatus.textContent = "uploading…";
   const response = await fetch("/api/enrollment", {
-    body: form,
+    body: submission.form,
     method: "POST",
   });
   const payload = await response.json();
@@ -633,9 +788,7 @@ enrollmentForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  state.enrollmentIdentities = payload.identities;
-  applyEnrollmentSnapshot(payload.reload?.enrollment ?? null);
-  renderEnrollmentList();
+  applyEnrollmentReload(payload);
   const failedDiagnostics = state.enrollmentDiagnostics.filter(
     (diagnostic) => diagnostic.embeddingCount === 0
   );

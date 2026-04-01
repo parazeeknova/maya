@@ -36,10 +36,12 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.14"
+          cache-local-path: apps/serve/.uv-cache
           enable-cache: true
           cache-dependency-glob: |
             apps/serve/pyproject.toml
             apps/serve/uv.lock
+          ignore-nothing-to-cache: true
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

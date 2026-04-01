@@ -36,6 +36,43 @@ const send = (
 const json = (body: unknown, status = 200): Response =>
   Response.json(body, { status });
 
+const optionalString = (
+  value: FormDataEntryValue | null
+): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+};
+
+const buildOptionalMetadata = ({
+  color,
+  email,
+  githubUsername,
+  linkedinId,
+  name,
+  phoneNumber,
+  worksAt,
+}: {
+  color: string;
+  email: string | undefined;
+  githubUsername: string | undefined;
+  linkedinId: string | undefined;
+  name: string;
+  phoneNumber: string | undefined;
+  worksAt: string | undefined;
+}) => ({
+  color,
+  ...(email === undefined ? {} : { email }),
+  ...(githubUsername === undefined ? {} : { githubUsername }),
+  ...(linkedinId === undefined ? {} : { linkedinId }),
+  name,
+  ...(phoneNumber === undefined ? {} : { phoneNumber }),
+  ...(worksAt === undefined ? {} : { worksAt }),
+});
+
 const slugify = (value: string): string => {
   const slug = value
     .trim()
@@ -114,8 +151,12 @@ const handleEnrollmentRequest = async (req: Request): Promise<Response> => {
   if (req.method === "POST" && url.pathname === "/api/enrollment") {
     const form = await req.formData();
     const name = form.get("name");
-    const role = form.get("role");
+    const worksAt = optionalString(form.get("worksAt"));
     const color = form.get("color");
+    const linkedinId = optionalString(form.get("linkedinId"));
+    const githubUsername = optionalString(form.get("githubUsername"));
+    const email = optionalString(form.get("email"));
+    const phoneNumber = optionalString(form.get("phoneNumber"));
     const files = form
       .getAll("files")
       .filter(
@@ -124,24 +165,30 @@ const handleEnrollmentRequest = async (req: Request): Promise<Response> => {
 
     if (
       typeof name !== "string" ||
-      typeof role !== "string" ||
       typeof color !== "string" ||
       files.length === 0
     ) {
       return json(
-        { error: "name, role, color, and at least one file are required." },
+        { error: "name, color, and at least one file are required." },
         400
       );
     }
 
     const existingIdentities = await listEnrollmentIdentities();
     const id = buildIdentityId(existingIdentities, name);
+    const metadata = buildOptionalMetadata({
+      color,
+      email,
+      githubUsername,
+      linkedinId,
+      name,
+      phoneNumber,
+      worksAt,
+    });
     const identities = await upsertEnrollmentIdentity(
       {
-        color,
         id,
-        name,
-        role,
+        ...metadata,
       },
       files
     );
@@ -153,11 +200,7 @@ const handleEnrollmentRequest = async (req: Request): Promise<Response> => {
         }))
       ),
       id,
-      metadata: {
-        color,
-        name,
-        role,
-      },
+      metadata,
       type: "admin.upsert-identity",
     });
     return json({ identities, reload });

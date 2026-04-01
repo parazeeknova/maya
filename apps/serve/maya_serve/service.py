@@ -301,13 +301,17 @@ class FaceRecognitionService:
             providers = ["CPUExecutionProvider"]
 
         ctx_id = 0 if "CUDAExecutionProvider" in providers else -1
-        analysis = FaceAnalysis(
-            name=self._settings.model_pack,
-            root=str(self._settings.model_root),
-            allowed_modules=["detection", "recognition"],
-            providers=providers,
-        )
-        analysis.prepare(ctx_id=ctx_id, det_size=self._settings.detector_size)
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            analysis = FaceAnalysis(
+                name=self._settings.model_pack,
+                root=str(self._settings.model_root),
+                allowed_modules=["detection", "recognition"],
+                providers=providers,
+            )
+            analysis.prepare(ctx_id=ctx_id, det_size=self._settings.detector_size)
         return analysis, providers
 
     def _load_identity_embeddings(
@@ -387,8 +391,12 @@ class FaceRecognitionService:
                     {
                         "id": metadata.id,
                         "name": metadata.name,
-                        "role": metadata.role,
                         "color": metadata.color,
+                        "worksAt": metadata.works_at,
+                        "linkedinId": metadata.linkedin_id,
+                        "githubUsername": metadata.github_username,
+                        "email": metadata.email,
+                        "phoneNumber": metadata.phone_number,
                     }
                     if metadata is not None
                     else None
