@@ -129,6 +129,13 @@ export const listEnrollmentIdentities = async (): Promise<
   return manifest.identities;
 };
 
+export const getEnrollmentIdentity = async (
+  identityId: string
+): Promise<EnrollmentManifestIdentity | undefined> => {
+  const identities = await listEnrollmentIdentities();
+  return identities.find((identity) => identity.id === identityId);
+};
+
 export const readEnrollmentIdentityFiles = (
   identity: EnrollmentManifestIdentity
 ): Promise<PythonAdminIdentityFile[]> =>
@@ -180,6 +187,80 @@ export const upsertEnrollmentIdentity = async (
     (identity) => identity.id !== metadata.id
   );
   identities.push(nextIdentity);
+  await writeManifest({ identities });
+  return listEnrollmentIdentities();
+};
+
+export const upsertEnrollmentIdentityPayload = async (
+  metadata: EnrollmentMetadata & { id: string },
+  files: PythonAdminIdentityFile[]
+): Promise<EnrollmentManifestIdentity[]> => {
+  const manifest = await readManifest();
+  const existing = manifest.identities.find(
+    (identity) => identity.id === metadata.id
+  );
+  const nextFiles = files.map((file) => file.name);
+  const staleFiles =
+    existing?.files.filter((filename) => !nextFiles.includes(filename)) ?? [];
+
+  await Promise.all(
+    files.map(async (file) => {
+      await write(
+        fileFor(`${metadata.id}/${file.name}`),
+        Buffer.from(file.data, "base64")
+      );
+    })
+  );
+
+  await write(
+    fileFor(`${metadata.id}/metadata.json`),
+    JSON.stringify(normalizeMetadata(metadata))
+  );
+
+  if (staleFiles.length > 0) {
+    await deleteKeys(
+      staleFiles.map((filename) => `${metadata.id}/${filename}`)
+    );
+  }
+
+  const identities = manifest.identities.filter(
+    (identity) => identity.id !== metadata.id
+  );
+  identities.push({
+    files: nextFiles,
+    id: metadata.id,
+    metadata: normalizeMetadata(metadata),
+  });
+  await writeManifest({ identities });
+  return listEnrollmentIdentities();
+};
+
+export const updateEnrollmentIdentityMetadata = async (
+  identityId: string,
+  metadata: EnrollmentMetadata
+): Promise<EnrollmentManifestIdentity[]> => {
+  const manifest = await readManifest();
+  const existing = manifest.identities.find(
+    (identity) => identity.id === identityId
+  );
+  if (existing === undefined) {
+    throw new Error(`Identity '${identityId}' was not found.`);
+  }
+
+  const normalizedMetadata = normalizeMetadata(metadata);
+  await write(
+    fileFor(`${identityId}/metadata.json`),
+    JSON.stringify(normalizedMetadata)
+  );
+
+  const identities = manifest.identities.map((identity) =>
+    identity.id === identityId
+      ? {
+          ...identity,
+          metadata: normalizedMetadata,
+        }
+      : identity
+  );
   await writeManifest({ identities });
   return listEnrollmentIdentities();
 };

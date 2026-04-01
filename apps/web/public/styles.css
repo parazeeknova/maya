@@ -195,6 +195,11 @@ body {
   align-items: center;
 }
 
+.identity-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
 .identity-row strong {
   font-size: 0.74rem;
   font-weight: 600;
@@ -221,6 +226,17 @@ body {
 }
 
 .identity-delete {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.68rem;
+}
+
+.identity-edit {
   padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 8px;

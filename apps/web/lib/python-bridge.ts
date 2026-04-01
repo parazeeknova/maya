@@ -1,12 +1,24 @@
+import sharp from "sharp";
+
+import {
+  getEnrollmentIdentity,
+  isEnrollmentStoreConfigured,
+  upsertEnrollmentIdentityPayload,
+} from "./enrollment-store";
 import { stringifyMessage } from "./protocol";
 import type {
-  PythonAdminMessage,
   PythonAdminResultMessage,
   ClientFrameSubmitMessage,
   ClientSignalMessage,
+  IdentityMetadataPayload,
+  IdentitySyncStatus,
+  PythonAdminIdentityFile,
+  PythonAdminMessage,
+  PythonAutoEnrollmentEvent,
   PythonFrameProcessMessage,
   PythonFrameResultMessage,
   PythonServiceReadyMessage,
+  ServerEnrollmentSyncMessage,
   ServerToClientMessage,
 } from "./protocol";
 
@@ -16,6 +28,19 @@ interface SessionState {
   inFlightFrameId: number | null;
   queuedFrame: PythonFrameProcessMessage | null;
   send: Sender;
+}
+
+interface CachedFrame {
+  data: string;
+  height: number;
+  width: number;
+}
+
+interface PendingUnknownTrack {
+  createdIdentity?: IdentityMetadataPayload;
+  firstSeenMs: number;
+  hits: number;
+  lastSeenMs: number;
 }
 
 interface PythonStatus {
@@ -43,6 +68,12 @@ const DISCONNECTED_STATUS: PythonStatus = {
   reconnecting: false,
 };
 
+const AUTO_ENROLL_DUPLICATE_GUARD = 0.4;
+const AUTO_ENROLL_MAX_TRACK_STALENESS_MS = 4000;
+const AUTO_ENROLL_MIN_HITS = 6;
+const AUTO_ENROLL_MIN_MS = 1500;
+const MAX_CACHED_FRAMES_PER_SESSION = 4;
+
 const normalizePythonWebSocketUrl = (url: string): string => {
   if (url.startsWith("ws://") || url.startsWith("wss://")) {
     return url;
@@ -57,7 +88,17 @@ const normalizePythonWebSocketUrl = (url: string): string => {
 };
 
 export class PythonBridge {
+  private autoIdentityCounter = 0;
+  private readonly cachedFrames = new Map<string, Map<number, CachedFrame>>();
+  private readonly identitySyncStates = new Map<
+    string,
+    { error?: string; status: IdentitySyncStatus }
+  >();
   private readonly pendingAdminRequests: PendingAdminRequest[] = [];
+  private readonly pendingUnknownTracks = new Map<
+    string,
+    PendingUnknownTrack
+  >();
   private readonly pythonUrl: string;
   private readonly sessions = new Map<string, SessionState>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -80,6 +121,12 @@ export class PythonBridge {
 
   unregisterSession(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.cachedFrames.delete(sessionId);
+    for (const trackKey of this.pendingUnknownTracks.keys()) {
+      if (trackKey.startsWith(`${sessionId}:`)) {
+        this.pendingUnknownTracks.delete(trackKey);
+      }
+    }
     if (
       this.sessions.size === 0 &&
       this.pendingAdminRequests.length === 0 &&
@@ -148,6 +195,8 @@ export class PythonBridge {
     if (!session) {
       return;
     }
+
+    this.storeFrame(message);
 
     session.queuedFrame = {
       capturedAt: message.capturedAt,
@@ -233,7 +282,7 @@ export class PythonBridge {
       if (typeof event.data !== "string") {
         return;
       }
-      this.handlePythonMessage(event.data);
+      void this.handlePythonMessage(event.data);
     });
 
     upstream.addEventListener("open", () => {
@@ -305,14 +354,249 @@ export class PythonBridge {
       return;
     }
 
+    this.prunePendingUnknownTracks(Date.now());
+    this.handleAutoEnrollments(payload);
+
     const session = this.sessions.get(payload.sessionId);
     if (!session) {
       return;
     }
 
+    this.applySyncStatesToFrame(payload);
     session.inFlightFrameId = null;
     session.send(payload);
     this.flushSession(payload.sessionId);
+  }
+
+  private applySyncStatesToFrame(payload: PythonFrameResultMessage): void {
+    for (const face of payload.faces) {
+      if (face.trackId !== null) {
+        const pending = this.pendingUnknownTracks.get(
+          PythonBridge.trackKey(payload.sessionId, face.trackId)
+        );
+        if (
+          face.identity === null &&
+          pending?.createdIdentity !== undefined &&
+          pending.createdIdentity.syncStatus !== "error"
+        ) {
+          face.identity = pending.createdIdentity;
+          face.isUnknown = false;
+        }
+      }
+
+      if (face.identity === null) {
+        continue;
+      }
+
+      const syncState = this.identitySyncStates.get(face.identity.id);
+      if (syncState === undefined) {
+        continue;
+      }
+
+      face.identity = {
+        ...face.identity,
+        syncStatus: syncState.status,
+      };
+    }
+  }
+
+  private handleAutoEnrollments(payload: PythonFrameResultMessage): void {
+    for (const face of payload.faces) {
+      if (face.trackId === null) {
+        continue;
+      }
+
+      const trackKey = PythonBridge.trackKey(payload.sessionId, face.trackId);
+      if (face.identity !== null && !face.isUnknown) {
+        this.pendingUnknownTracks.delete(trackKey);
+        continue;
+      }
+
+      if (!face.isUnknown || face.confidence >= AUTO_ENROLL_DUPLICATE_GUARD) {
+        this.pendingUnknownTracks.delete(trackKey);
+        continue;
+      }
+
+      const now = Date.now();
+      const pending = this.pendingUnknownTracks.get(trackKey);
+      if (pending?.createdIdentity !== undefined) {
+        pending.lastSeenMs = now;
+        continue;
+      }
+
+      const nextPending: PendingUnknownTrack = {
+        firstSeenMs: pending?.firstSeenMs ?? now,
+        hits: (pending?.hits ?? 0) + 1,
+        lastSeenMs: now,
+      };
+      this.pendingUnknownTracks.set(trackKey, nextPending);
+      const observedHits = Math.max(nextPending.hits, face.trackAgeFrames ?? 0);
+
+      if (
+        observedHits < AUTO_ENROLL_MIN_HITS ||
+        now - nextPending.firstSeenMs < AUTO_ENROLL_MIN_MS
+      ) {
+        continue;
+      }
+
+      const identity = this.createAutoIdentity();
+      nextPending.createdIdentity = {
+        ...identity,
+        syncStatus: "syncing",
+      };
+      this.setIdentitySyncStatus(identity.id, "syncing");
+
+      face.identity = nextPending.createdIdentity;
+      face.isUnknown = false;
+      void this.persistAutoEnrollment(
+        payload.sessionId,
+        payload.frameId,
+        face.bbox,
+        identity
+      );
+    }
+  }
+
+  private storeFrame(message: ClientFrameSubmitMessage): void {
+    const frames =
+      this.cachedFrames.get(message.sessionId) ??
+      new Map<number, CachedFrame>();
+    frames.set(message.frameId, {
+      data: message.image.data,
+      height: message.image.height,
+      width: message.image.width,
+    });
+    while (frames.size > MAX_CACHED_FRAMES_PER_SESSION) {
+      const oldestFrameId = Math.min(...frames.keys());
+      frames.delete(oldestFrameId);
+    }
+    this.cachedFrames.set(message.sessionId, frames);
+  }
+
+  private prunePendingUnknownTracks(now: number): void {
+    for (const [trackKey, pending] of this.pendingUnknownTracks.entries()) {
+      if (now - pending.lastSeenMs > AUTO_ENROLL_MAX_TRACK_STALENESS_MS) {
+        this.pendingUnknownTracks.delete(trackKey);
+      }
+    }
+  }
+
+  private static trackKey(sessionId: string, trackId: number): string {
+    return `${sessionId}:${trackId}`;
+  }
+
+  private createAutoIdentity(): Omit<IdentityMetadataPayload, "syncStatus"> {
+    this.autoIdentityCounter += 1;
+    const suffix = `${Date.now().toString(36)}-${this.autoIdentityCounter.toString(36)}`;
+    const id = `person-${suffix}`;
+    return {
+      color: "#ffffff",
+      id,
+      name: `person ${suffix}`,
+    };
+  }
+
+  private async persistAutoEnrollment(
+    sessionId: string,
+    frameId: number,
+    bbox: PythonAutoEnrollmentEvent["bbox"],
+    identity: Omit<IdentityMetadataPayload, "syncStatus">
+  ): Promise<void> {
+    try {
+      if (!isEnrollmentStoreConfigured()) {
+        throw new Error("Enrollment storage is not configured.");
+      }
+
+      const existingIdentity = await getEnrollmentIdentity(identity.id);
+      if (existingIdentity !== undefined) {
+        this.setIdentitySyncStatus(identity.id, "ready");
+        return;
+      }
+
+      const file = await this.cropEnrollmentImage(sessionId, frameId, bbox);
+      await upsertEnrollmentIdentityPayload(identity, [file]);
+      const reload = await this.sendAdminMessage({
+        files: [file],
+        id: identity.id,
+        metadata: identity,
+        type: "admin.upsert-identity",
+      });
+      this.setIdentitySyncStatus(
+        identity.id,
+        reload.ok ? "ready" : "error",
+        reload.ok ? undefined : "Python enrollment sync failed."
+      );
+    } catch (error) {
+      this.setIdentitySyncStatus(
+        identity.id,
+        "error",
+        error instanceof Error ? error.message : "Auto enrollment failed."
+      );
+    }
+  }
+
+  private async cropEnrollmentImage(
+    sessionId: string,
+    frameId: number,
+    bbox: PythonAutoEnrollmentEvent["bbox"]
+  ): Promise<PythonAdminIdentityFile> {
+    const frame = this.cachedFrames.get(sessionId)?.get(frameId);
+    if (frame === undefined) {
+      throw new Error("Auto enrollment frame cache missed.");
+    }
+
+    const paddingX = Math.round(bbox.width * 0.18);
+    const paddingY = Math.round(bbox.height * 0.22);
+    const left = Math.max(0, Math.floor(bbox.x - paddingX));
+    const top = Math.max(0, Math.floor(bbox.y - paddingY));
+    const width = Math.min(
+      frame.width - left,
+      Math.ceil(bbox.width + paddingX * 2)
+    );
+    const height = Math.min(
+      frame.height - top,
+      Math.ceil(bbox.height + paddingY * 2)
+    );
+    if (width <= 0 || height <= 0) {
+      throw new Error("Auto enrollment crop was empty.");
+    }
+
+    const cropped = await sharp(Buffer.from(frame.data, "base64"))
+      .extract({
+        height,
+        left,
+        top,
+        width,
+      })
+      .jpeg({
+        mozjpeg: true,
+        quality: 88,
+      })
+      .toBuffer();
+
+    return {
+      data: cropped.toString("base64"),
+      name: "ref-auto-1.jpg",
+    };
+  }
+
+  private setIdentitySyncStatus(
+    identityId: string,
+    status: IdentitySyncStatus,
+    error?: string
+  ): void {
+    this.identitySyncStates.set(identityId, {
+      ...(error === undefined ? {} : { error }),
+      status,
+    });
+
+    const message: ServerEnrollmentSyncMessage = {
+      ...(error === undefined ? {} : { error }),
+      identityId,
+      status,
+      type: "enrollment.sync",
+    };
+    this.broadcast(message);
   }
 
   private scheduleReconnect(): void {
@@ -338,9 +622,7 @@ export class PythonBridge {
       type: "python.status",
     };
 
-    for (const session of this.sessions.values()) {
-      session.send(message);
-    }
+    this.broadcast(message);
   }
 
   private flushAdminRequests(): void {
@@ -373,5 +655,11 @@ export class PythonBridge {
     this.pendingAdminRequests.splice(requestIndex, 1);
     clearTimeout(request.timeoutId);
     request.resolve(result);
+  }
+
+  private broadcast(message: ServerToClientMessage): void {
+    for (const session of this.sessions.values()) {
+      session.send(message);
+    }
   }
 }

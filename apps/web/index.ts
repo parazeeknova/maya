@@ -2,9 +2,11 @@ import type { Serve, ServerWebSocket } from "bun";
 
 import {
   deleteEnrollmentIdentity,
+  getEnrollmentIdentity,
   isEnrollmentStoreConfigured,
   listEnrollmentIdentities,
   readEnrollmentIdentityFiles,
+  updateEnrollmentIdentityMetadata,
   upsertEnrollmentIdentity,
 } from "./lib/enrollment-store";
 import {
@@ -72,6 +74,15 @@ const buildOptionalMetadata = ({
   ...(phoneNumber === undefined ? {} : { phoneNumber }),
   ...(worksAt === undefined ? {} : { worksAt }),
 });
+
+const optionalJsonString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+};
 
 const slugify = (value: string): string => {
   const slug = value
@@ -200,6 +211,48 @@ const handleEnrollmentRequest = async (req: Request): Promise<Response> => {
         }))
       ),
       id,
+      metadata,
+      type: "admin.upsert-identity",
+    });
+    return json({ identities, reload });
+  }
+
+  if (req.method === "PATCH" && url.pathname.startsWith("/api/enrollment/")) {
+    const identityId = decodeURIComponent(
+      url.pathname.replace("/api/enrollment/", "")
+    );
+    if (!identityId) {
+      return json({ error: "identity id is required." }, 400);
+    }
+
+    const existingIdentity = await getEnrollmentIdentity(identityId);
+    if (existingIdentity === undefined) {
+      return json({ error: "identity not found." }, 404);
+    }
+
+    const payload = (await req.json()) as Record<string, unknown>;
+    const name = optionalJsonString(payload["name"]);
+    const color = optionalJsonString(payload["color"]);
+    if (name === undefined || color === undefined) {
+      return json({ error: "name and color are required." }, 400);
+    }
+
+    const metadata = buildOptionalMetadata({
+      color,
+      email: optionalJsonString(payload["email"]),
+      githubUsername: optionalJsonString(payload["githubUsername"]),
+      linkedinId: optionalJsonString(payload["linkedinId"]),
+      name,
+      phoneNumber: optionalJsonString(payload["phoneNumber"]),
+      worksAt: optionalJsonString(payload["worksAt"]),
+    });
+    const identities = await updateEnrollmentIdentityMetadata(
+      identityId,
+      metadata
+    );
+    const reload = await bridge.sendAdminMessage({
+      files: await readEnrollmentIdentityFiles(existingIdentity),
+      id: identityId,
       metadata,
       type: "admin.upsert-identity",
     });

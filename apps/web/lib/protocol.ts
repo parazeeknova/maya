@@ -45,6 +45,8 @@ export interface PythonFrameProcessMessage {
   type: "frame.process";
 }
 
+export type IdentitySyncStatus = "error" | "ready" | "syncing";
+
 export interface IdentityMetadataPayload {
   color: string;
   email?: string;
@@ -53,7 +55,22 @@ export interface IdentityMetadataPayload {
   linkedinId?: string;
   name: string;
   phoneNumber?: string;
+  syncStatus?: IdentitySyncStatus;
   worksAt?: string;
+}
+
+export interface PythonAutoEnrollmentEvent {
+  bbox: {
+    height: number;
+    width: number;
+    x: number;
+    y: number;
+  };
+  faceConfidence: number;
+  frameId: number;
+  identity: Omit<IdentityMetadataPayload, "syncStatus">;
+  sessionId: string;
+  trackId: number;
 }
 
 export interface PythonServiceReadyMessage {
@@ -81,6 +98,7 @@ export interface PythonServiceReadyMessage {
 }
 
 export interface PythonFrameResultMessage {
+  autoEnrollments?: PythonAutoEnrollmentEvent[];
   capturedAt: number;
   faces: {
     bbox: {
@@ -90,8 +108,10 @@ export interface PythonFrameResultMessage {
       y: number;
     };
     confidence: number;
+    detConfidence?: number;
     identity: IdentityMetadataPayload | null;
     isUnknown: boolean;
+    trackAgeFrames?: number;
     trackId: number | null;
   }[];
   frameId: number;
@@ -163,9 +183,17 @@ export interface ServerErrorMessage {
   type: "error";
 }
 
+export interface ServerEnrollmentSyncMessage {
+  error?: string;
+  identityId: string;
+  status: IdentitySyncStatus;
+  type: "enrollment.sync";
+}
+
 export type ServerToClientMessage =
   | PythonFrameResultMessage
   | ServerErrorMessage
+  | ServerEnrollmentSyncMessage
   | ServerPythonStatusMessage
   | ServerSessionReadyMessage
   | ServerSignalAckMessage;

@@ -26,6 +26,7 @@ const enrollmentValue = requiredNode("#enrollment-value");
 const indexValue = requiredNode("#index-value");
 const enrollmentForm = requiredNode("#enrollment-form");
 const enrollmentStatus = requiredNode("#enrollment-status");
+const enrollSubmitButton = requiredNode("#enroll-submit-button");
 const enrollmentList = requiredNode("#enrollment-list");
 const enrollmentDiagnostics = requiredNode("#enrollment-diagnostics");
 const identityNameInput = requiredNode("#identity-name-input");
@@ -52,10 +53,12 @@ if (overlayContext === null || captureContext === null) {
 const state = {
   activeStream: null,
   cameraFacingMode: "user",
+  editingIdentityId: null,
   enrollmentDiagnostics: [],
   enrollmentIdentities: [],
   frameId: 0,
   framesProcessed: 0,
+  identitySyncStates: new Map(),
   lastCompletedFrameId: 0,
   lastResultFrameId: -1,
   renderTracks: new Map(),
@@ -77,14 +80,22 @@ const renderEnrollmentList = () => {
   enrollmentList.replaceChildren();
 
   for (const identity of state.enrollmentIdentities) {
+    const syncState = state.identitySyncStates.get(identity.id);
+    const syncSuffix =
+      syncState === undefined || syncState.status === "ready"
+        ? ""
+        : ` · ${syncState.status}`;
     const row = document.createElement("div");
     row.className = "identity-row";
     row.innerHTML = `
       <div>
         <strong>${identity.metadata.name}</strong>
-        <span>${identity.id} · ${identity.files.length} file(s)</span>
+        <span>${identity.id} · ${identity.files.length} file(s)${syncSuffix}</span>
       </div>
-      <button class="identity-delete" data-id="${identity.id}" type="button">Delete</button>
+      <div class="identity-actions">
+        <button class="identity-edit" data-id="${identity.id}" type="button">Edit</button>
+        <button class="identity-delete" data-id="${identity.id}" type="button">Delete</button>
+      </div>
     `;
     enrollmentList.append(row);
   }
@@ -100,6 +111,29 @@ const renderEnrollmentList = () => {
 const updateCameraFlipButton = () => {
   cameraFlipButton.textContent =
     state.cameraFacingMode === "user" ? "rear" : "front";
+};
+
+const setEnrollmentFormMode = (identity) => {
+  state.editingIdentityId = identity?.id ?? null;
+
+  if (identity === null) {
+    enrollmentForm.reset();
+    identityColorInput.value = "#4ee3ff";
+    identityFilesInput.value = "";
+    enrollSubmitButton.textContent = "Upload";
+    return;
+  }
+
+  identityNameInput.value = identity.metadata.name;
+  identityWorksAtInput.value = identity.metadata.worksAt ?? "";
+  identityColorInput.value = identity.metadata.color;
+  identityLinkedinInput.value = identity.metadata.linkedinId ?? "";
+  identityGithubInput.value = identity.metadata.githubUsername ?? "";
+  identityEmailInput.value = identity.metadata.email ?? "";
+  identityPhoneInput.value = identity.metadata.phoneNumber ?? "";
+  identityFilesInput.value = "";
+  enrollSubmitButton.textContent = "Save";
+  enrollmentStatus.textContent = `editing ${identity.id}`;
 };
 
 const renderEnrollmentDiagnostics = () => {
@@ -170,7 +204,10 @@ const collectEnrollmentSubmission = () => {
   }
 
   const { files } = identityFilesInput;
-  if (files === null || files.length === 0) {
+  if (
+    state.editingIdentityId === null &&
+    (files === null || files.length === 0)
+  ) {
     return {
       error: "select at least one file",
     };
@@ -192,8 +229,10 @@ const collectEnrollmentSubmission = () => {
     }
   }
 
-  for (const file of files) {
-    form.append("files", file);
+  if (state.editingIdentityId === null && files !== null) {
+    for (const file of files) {
+      form.append("files", file);
+    }
   }
 
   return { form };
@@ -251,6 +290,20 @@ const getIdentityDetailRows = (identity) => {
         }
       : null,
   ].filter((row) => row !== null);
+};
+
+const withSyncDetail = (detailRows, syncState) => {
+  if (syncState === undefined || syncState.status === "ready") {
+    return detailRows;
+  }
+
+  return [
+    {
+      label: "SYNC",
+      value: syncState.status,
+    },
+    ...detailRows,
+  ];
 };
 
 const measureTrackLayout = (headerLabel, confidenceText, detailRows) => {
@@ -387,8 +440,20 @@ const updateRenderTracks = (message) => {
     const existing = state.renderTracks.get(key);
     const fromBox = existing ? getTrackBox(existing, now) : cloneBox(face.bbox);
     const { identity } = face;
+    const syncState =
+      identity === null
+        ? undefined
+        : (state.identitySyncStates.get(identity.id) ??
+          (identity.syncStatus === undefined
+            ? undefined
+            : {
+                status: identity.syncStatus,
+              }));
     const confidenceText = `${(face.confidence * 100).toFixed(0)}%`;
-    const detailRows = getIdentityDetailRows(identity);
+    const detailRows = withSyncDetail(
+      getIdentityDetailRows(identity),
+      syncState
+    );
     const headerLabel = identity ? identity.name : "unknown";
     const transitionDuration = Math.max(48, message.sampleIntervalMs * 0.9);
     const velocity =
@@ -534,78 +599,102 @@ const syncOverlaySize = () => {
   drawOverlay();
 };
 
+const handleEnrollmentSyncMessage = (message) => {
+  state.identitySyncStates.set(message.identityId, {
+    ...(message.error === undefined ? {} : { error: message.error }),
+    status: message.status,
+  });
+  renderEnrollmentList();
+  if (message.status === "ready") {
+    void loadEnrollmentList();
+  }
+};
+
+const handleFrameResultMessage = (message) => {
+  if (message.frameId < state.lastResultFrameId) {
+    return;
+  }
+
+  state.lastCompletedFrameId = Math.max(
+    state.lastCompletedFrameId,
+    message.frameId
+  );
+  state.framesProcessed += 1;
+  state.lastResultFrameId = message.frameId;
+  state.sourceSize = message.sourceSize;
+  frameCounter.textContent = `${state.framesProcessed} frames`;
+  indexValue.textContent = String(message.indexVersion);
+  latencyChip.textContent = `${message.latencyMs.toFixed(1)} ms`;
+
+  if (message.latencyMs > 300) {
+    state.sampling.jpegQuality = 0.42;
+    state.sampling.maxWidth = 224;
+  } else if (message.latencyMs > 160) {
+    state.sampling.jpegQuality = 0.46;
+    state.sampling.maxWidth = 256;
+  } else if (message.latencyMs < 80) {
+    state.sampling.jpegQuality = 0.5;
+    state.sampling.maxWidth = 320;
+  }
+
+  updateRenderTracks(message);
+};
+
+const handlePythonStatusMessage = (message) => {
+  setConnectionState(message.connected ? "python-ready" : "python-wait");
+  enrollmentValue.textContent = message.ready
+    ? `${message.ready.enrollment.identities} identities`
+    : "pending";
+  indexValue.textContent = message.ready
+    ? String(message.ready.enrollment.version)
+    : "pending";
+  providersValue.textContent = message.ready
+    ? message.ready.providers.join(", ")
+    : "pending";
+  trackingValue.textContent = message.ready?.trackingEnabled
+    ? "ByteTrack"
+    : "off";
+  applyEnrollmentSnapshot(message.ready?.enrollment ?? null);
+};
+
+const handleSessionReadyMessage = (message) => {
+  state.sampling = {
+    ...state.sampling,
+    intervalMs: message.sampling.intervalMs,
+    jpegQuality: message.sampling.jpegQuality,
+    maxWidth: message.sampling.maxWidth,
+  };
+  state.sessionId = message.sessionId;
+  intervalInput.value = String(message.sampling.intervalMs);
+  intervalValue.textContent = `${message.sampling.intervalMs} ms`;
+  qualityInput.value = String(Math.round(message.sampling.jpegQuality * 100));
+  qualityValue.textContent = message.sampling.jpegQuality.toFixed(2);
+  restartSampler();
+};
+
 const handleServerMessage = (message) => {
-  switch (message.type) {
-    case "error": {
-      connectionValue.textContent = message.message;
-      break;
-    }
-    case "frame.result": {
-      if (message.frameId >= state.lastResultFrameId) {
-        state.lastCompletedFrameId = Math.max(
-          state.lastCompletedFrameId,
-          message.frameId
-        );
-        state.framesProcessed += 1;
-        state.lastResultFrameId = message.frameId;
-        state.sourceSize = message.sourceSize;
-        frameCounter.textContent = `${state.framesProcessed} frames`;
-        indexValue.textContent = String(message.indexVersion);
-        latencyChip.textContent = `${message.latencyMs.toFixed(1)} ms`;
-        if (message.latencyMs > 300) {
-          state.sampling.jpegQuality = 0.42;
-          state.sampling.maxWidth = 224;
-        } else if (message.latencyMs > 160) {
-          state.sampling.jpegQuality = 0.46;
-          state.sampling.maxWidth = 256;
-        } else if (message.latencyMs < 80) {
-          state.sampling.jpegQuality = 0.5;
-          state.sampling.maxWidth = 320;
-        }
-        updateRenderTracks(message);
-      }
-      break;
-    }
-    case "python.status": {
-      setConnectionState(message.connected ? "python-ready" : "python-wait");
-      enrollmentValue.textContent = message.ready
-        ? `${message.ready.enrollment.identities} identities`
-        : "pending";
-      indexValue.textContent = message.ready
-        ? String(message.ready.enrollment.version)
-        : "pending";
-      providersValue.textContent = message.ready
-        ? message.ready.providers.join(", ")
-        : "pending";
-      trackingValue.textContent = message.ready?.trackingEnabled
-        ? "ByteTrack"
-        : "off";
-      applyEnrollmentSnapshot(message.ready?.enrollment ?? null);
-      break;
-    }
-    case "session.ready": {
-      state.sampling = {
-        ...state.sampling,
-        intervalMs: message.sampling.intervalMs,
-        jpegQuality: message.sampling.jpegQuality,
-        maxWidth: message.sampling.maxWidth,
-      };
-      state.sessionId = message.sessionId;
-      intervalInput.value = String(message.sampling.intervalMs);
-      intervalValue.textContent = `${message.sampling.intervalMs} ms`;
-      qualityInput.value = String(
-        Math.round(message.sampling.jpegQuality * 100)
-      );
-      qualityValue.textContent = message.sampling.jpegQuality.toFixed(2);
-      restartSampler();
-      break;
-    }
-    case "signal.ack": {
-      break;
-    }
-    default: {
-      break;
-    }
+  if (message.type === "enrollment.sync") {
+    handleEnrollmentSyncMessage(message);
+    return;
+  }
+
+  if (message.type === "error") {
+    connectionValue.textContent = message.message;
+    return;
+  }
+
+  if (message.type === "frame.result") {
+    handleFrameResultMessage(message);
+    return;
+  }
+
+  if (message.type === "python.status") {
+    handlePythonStatusMessage(message);
+    return;
+  }
+
+  if (message.type === "session.ready") {
+    handleSessionReadyMessage(message);
   }
 };
 
@@ -816,34 +905,66 @@ enrollmentForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  enrollmentStatus.textContent = "uploading…";
-  const response = await fetch("/api/enrollment", {
-    body: submission.form,
-    method: "POST",
-  });
+  const isEditing = state.editingIdentityId !== null;
+  enrollmentStatus.textContent = isEditing ? "saving…" : "uploading…";
+  const response = await fetch(
+    isEditing
+      ? `/api/enrollment/${state.editingIdentityId}`
+      : "/api/enrollment",
+    {
+      body: isEditing
+        ? JSON.stringify(Object.fromEntries(submission.form.entries()))
+        : submission.form,
+      headers: isEditing
+        ? {
+            "Content-Type": "application/json",
+          }
+        : undefined,
+      method: isEditing ? "PATCH" : "POST",
+    }
+  );
   const payload = await response.json();
   if (!response.ok) {
-    enrollmentStatus.textContent = payload.error ?? "upload failed";
+    enrollmentStatus.textContent = payload.error ?? "save failed";
     return;
   }
 
   applyEnrollmentReload(payload);
-  const failedDiagnostics = state.enrollmentDiagnostics.filter(
-    (diagnostic) => diagnostic.embeddingCount === 0
-  );
-  if (!payload.reload?.ok) {
-    enrollmentStatus.textContent = "uploaded; sync pending";
-  } else if (failedDiagnostics.length > 0) {
-    enrollmentStatus.textContent = "uploaded; no embedding extracted";
+  if (isEditing) {
+    enrollmentStatus.textContent = payload.reload?.ok
+      ? "saved + synced"
+      : "saved; sync pending";
   } else {
-    enrollmentStatus.textContent = "uploaded + synced";
+    const failedDiagnostics = state.enrollmentDiagnostics.filter(
+      (diagnostic) => diagnostic.embeddingCount === 0
+    );
+    if (!payload.reload?.ok) {
+      enrollmentStatus.textContent = "uploaded; sync pending";
+    } else if (failedDiagnostics.length > 0) {
+      enrollmentStatus.textContent = "uploaded; no embedding extracted";
+    } else {
+      enrollmentStatus.textContent = "uploaded + synced";
+    }
   }
-  enrollmentForm.reset();
-  identityColorInput.value = "#4ee3ff";
+  setEnrollmentFormMode(null);
 });
 
 enrollmentList.addEventListener("click", async (event) => {
   if (!(event.target instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (event.target.classList.contains("identity-edit")) {
+    const identityId = event.target.dataset.id;
+    if (identityId === undefined) {
+      return;
+    }
+    const identity = state.enrollmentIdentities.find(
+      (candidate) => candidate.id === identityId
+    );
+    if (identity !== undefined) {
+      setEnrollmentFormMode(identity);
+    }
     return;
   }
 
@@ -865,6 +986,9 @@ enrollmentList.addEventListener("click", async (event) => {
   state.enrollmentIdentities = payload.identities;
   applyEnrollmentSnapshot(payload.reload?.enrollment ?? null);
   renderEnrollmentList();
+  if (state.editingIdentityId === identityId) {
+    setEnrollmentFormMode(null);
+  }
   enrollmentStatus.textContent = payload.reload?.ok
     ? "deleted + synced"
     : "deleted; sync pending";
