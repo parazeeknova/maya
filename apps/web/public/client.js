@@ -19,6 +19,7 @@ const menuToggle = requiredNode("#menu-toggle");
 const connectionValue = requiredNode("#connection-value");
 const frameCounter = requiredNode("#frame-counter");
 const latencyChip = requiredNode("#latency-chip");
+const cameraFlipButton = requiredNode("#camera-flip-button");
 const providersValue = requiredNode("#providers-value");
 const trackingValue = requiredNode("#tracking-value");
 const enrollmentValue = requiredNode("#enrollment-value");
@@ -49,6 +50,8 @@ if (overlayContext === null || captureContext === null) {
 }
 
 const state = {
+  activeStream: null,
+  cameraFacingMode: "user",
   enrollmentDiagnostics: [],
   enrollmentIdentities: [],
   frameId: 0,
@@ -92,6 +95,11 @@ const renderEnrollmentList = () => {
     empty.textContent = "no identities";
     enrollmentList.append(empty);
   }
+};
+
+const updateCameraFlipButton = () => {
+  cameraFlipButton.textContent =
+    state.cameraFacingMode === "user" ? "rear" : "front";
 };
 
 const renderEnrollmentDiagnostics = () => {
@@ -701,15 +709,30 @@ const connectSocket = () => {
   });
 };
 
-const startCamera = async () => {
+const stopCameraStream = () => {
+  if (!(state.activeStream instanceof MediaStream)) {
+    return;
+  }
+
+  for (const track of state.activeStream.getTracks()) {
+    track.stop();
+  }
+  state.activeStream = null;
+};
+
+const startCamera = async (facingMode = state.cameraFacingMode) => {
+  stopCameraStream();
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
-      facingMode: "user",
+      facingMode: { ideal: facingMode },
       height: { ideal: 720 },
       width: { ideal: 1280 },
     },
   });
+  state.activeStream = stream;
+  state.cameraFacingMode = facingMode;
+  updateCameraFlipButton();
 
   cameraFeed.addEventListener(
     "loadedmetadata",
@@ -722,7 +745,6 @@ const startCamera = async () => {
   cameraFeed.srcObject = stream;
   await cameraFeed.play();
   restartSampler();
-  window.requestAnimationFrame(renderLoop);
 };
 
 const bootstrap = async () => {
@@ -733,6 +755,17 @@ const bootstrap = async () => {
   } catch (error) {
     enrollmentStatus.textContent =
       error instanceof Error ? error.message : "enrollment unavailable";
+  }
+};
+
+const flipCamera = async () => {
+  const nextFacingMode =
+    state.cameraFacingMode === "user" ? "environment" : "user";
+
+  try {
+    await startCamera(nextFacingMode);
+  } catch {
+    await startCamera(state.cameraFacingMode);
   }
 };
 
@@ -761,8 +794,14 @@ qualityInput.addEventListener("input", () => {
   qualityValue.textContent = state.sampling.jpegQuality.toFixed(2);
 });
 
+cameraFlipButton.addEventListener("click", () => {
+  void flipCamera();
+});
+
 intervalValue.textContent = `${state.sampling.intervalMs} ms`;
 qualityValue.textContent = state.sampling.jpegQuality.toFixed(2);
+updateCameraFlipButton();
+window.requestAnimationFrame(renderLoop);
 
 enrollmentForm.addEventListener("submit", async (event) => {
   event.preventDefault();
