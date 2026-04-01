@@ -36,7 +36,7 @@ class Settings:
 
 def load_settings() -> Settings:
     return Settings(
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=8765,
         enrollment_sync_base_url="https://r2-maya.singularityworks.xyz",
         enrollment_sync_enabled=True,

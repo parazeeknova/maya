@@ -558,8 +558,14 @@ const startCamera = async () => {
 };
 
 const bootstrap = async () => {
-  await Promise.all([startCamera(), loadEnrollmentList()]);
+  await startCamera();
   connectSocket();
+  try {
+    await loadEnrollmentList();
+  } catch (error) {
+    enrollmentStatus.textContent =
+      error instanceof Error ? error.message : "enrollment unavailable";
+  }
 };
 
 menuToggle.addEventListener("click", () => {

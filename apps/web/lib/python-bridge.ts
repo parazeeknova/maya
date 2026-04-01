@@ -43,6 +43,19 @@ const DISCONNECTED_STATUS: PythonStatus = {
   reconnecting: false,
 };
 
+const normalizePythonWebSocketUrl = (url: string): string => {
+  if (url.startsWith("ws://") || url.startsWith("wss://")) {
+    return url;
+  }
+  if (url.startsWith("http://")) {
+    return `ws://${url.slice("http://".length)}`;
+  }
+  if (url.startsWith("https://")) {
+    return `wss://${url.slice("https://".length)}`;
+  }
+  return url;
+};
+
 export class PythonBridge {
   private readonly pendingAdminRequests: PendingAdminRequest[] = [];
   private readonly pythonUrl: string;
@@ -52,7 +65,7 @@ export class PythonBridge {
   private upstream: WebSocket | null = null;
 
   constructor(pythonUrl: string) {
-    this.pythonUrl = pythonUrl;
+    this.pythonUrl = normalizePythonWebSocketUrl(pythonUrl);
   }
 
   registerSession(sessionId: string, send: Sender): PythonStatus {
