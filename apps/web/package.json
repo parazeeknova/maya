@@ -4,7 +4,7 @@
   "type": "module",
   "module": "index.ts",
   "scripts": {
-    "build": "mkdir -p dist/public && bun build --target=bun --production --minify --outdir dist ./index.ts && cp -R public/. dist/public/",
+    "build": "mkdir -p dist/public && bun build --target=bun --production --minify --sourcemap --external sharp --outdir dist ./index.ts && cp -R public/. dist/public/",
     "dev": "bun --watch index.ts",
     "check": "oxlint --config ./.oxlintrc.json --fix . && oxfmt --config ./.oxfmtrc.jsonc .",
     "check-types": "tsc -p tsconfig.json --noEmit",
