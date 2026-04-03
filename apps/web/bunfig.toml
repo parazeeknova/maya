@@ -1,0 +1,4 @@
+[test]
+
+[test.run]
+exclude = ["e2e/**/*"]
